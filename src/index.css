@@ -1,0 +1,120 @@
+/* RM200x Material Manager 全局样式 */
+
+:root {
+  /* 暗色主题（默认） */
+  --color-bg: #1a1d23;
+  --color-bg-elev: #252932;
+  --color-bg-elev-2: #2f343f;
+  --color-bg-subtle: #20232b;
+  --color-bg-hover: #2f343f;
+  --color-bg-active: #1e3a5f;
+  --color-bg-danger: #3a1e1e;
+  --color-bg-success: #1e3a2a;
+  --color-bg-warning: #3a351e;
+  --color-bg-overlay: rgba(0,0,0,0.5);
+
+  --color-border: #3a3f4b;
+  --color-border-strong: #4a5060;
+  --color-border-dim: #2f343f;
+
+  --color-text: #e1e4eb;
+  --color-text-muted: #a0a6b0;
+  --color-text-dim: #6a707c;
+  --color-text-inverse: #1a1d23;
+
+  --color-primary: #4a8fe7;
+  --color-primary-hover: #5d9eff;
+  --color-primary-dim: #2c5a9a;
+  --color-primary-text: #c0d4f0;
+  --color-primary-soft: #1e3a5f;
+
+  --color-danger: #e74c3c;
+  --color-danger-hover: #ff6b5a;
+  --color-danger-soft: #3a1e1e;
+  --color-success: #2ecc71;
+  --color-success-text: #7fff9f;
+  --color-warning: #f1c40f;
+  --color-warning-text: #ffd76e;
+
+  --color-pixel-red: #ef4444;
+  --color-checker-a: #2a2d36;
+  --color-checker-b: #353945;
+
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --radius-sm: 3px;
+  --radius-md: 5px;
+  --radius-lg: 8px;
+
+  --font-sans: system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', sans-serif;
+}
+
+[data-theme="light"] {
+  --color-bg: #f5f5f5;
+  --color-bg-elev: #ffffff;
+  --color-bg-elev-2: #e8e8e8;
+  --color-bg-subtle: #f0f0f0;
+  --color-bg-hover: #e8e8e8;
+  --color-bg-active: #dbeafe;
+  --color-bg-danger: #fef2f2;
+  --color-bg-success: #f0fdf4;
+  --color-bg-warning: #fffbeb;
+  --color-bg-overlay: rgba(0,0,0,0.4);
+
+  --color-border: #d0d0d0;
+  --color-border-strong: #b8b8b8;
+  --color-border-dim: #e5e5e5;
+
+  --color-text: #222222;
+  --color-text-muted: #666666;
+  --color-text-dim: #999999;
+  --color-text-inverse: #ffffff;
+
+  --color-primary: #357abd;
+  --color-primary-hover: #4a8fe7;
+  --color-primary-dim: #2c5a9a;
+  --color-primary-text: #1d4ed8;
+  --color-primary-soft: #dbeafe;
+
+  --color-danger: #c0392b;
+  --color-danger-hover: #dc2626;
+  --color-danger-soft: #fef2f2;
+  --color-success: #27ae60;
+  --color-success-text: #15803d;
+  --color-warning: #d4a017;
+  --color-warning-text: #92400e;
+
+  --color-pixel-red: #ef4444;
+  --color-checker-a: #f0f0f0;
+  --color-checker-b: #e0e0e0;
+
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body, #root { height: 100%; }
+body {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text);
+  background: var(--color-bg);
+  -webkit-font-smoothing: antialiased;
+}
+button { cursor: pointer; color: var(--color-text); font-family: inherit; }
+input, select, textarea {
+  background: var(--color-bg-elev);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  font-family: inherit;
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--color-bg); }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-border-strong); }
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}

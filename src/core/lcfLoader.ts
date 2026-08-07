@@ -1,0 +1,500 @@
+import iconv from 'iconv-lite';
+import { decodeDatabase, decodeMapUnit, decodeTreeMap } from 'rpgrt';
+import type { Database, MapUnit, MapInfo, TreeMap, EngineVersion, Transcoder } from 'rpgrt';
+import type { ProjectGameData } from '../types/index';
+
+export type EncodingName = 'latin1' | 'gbk' | 'shift_jis' | 'euc_jp' | 'utf8';
+
+const ICONV_TO_ENCODING: Record<string, string> = {
+  latin1: 'latin1',
+  gbk: 'gbk',
+  shift_jis: 'shift_jis',
+  euc_jp: 'eucjp',
+  utf8: 'utf8',
+};
+
+export function makeTranscoder(enc: EncodingName): Transcoder {
+  const target = ICONV_TO_ENCODING[enc] ?? enc;
+  return {
+    decode(bytes: Uint8Array): string {
+      return iconv.decode(bytes, target);
+    },
+    encode(str: string): Uint8Array {
+      return new Uint8Array(iconv.encode(str, target));
+    },
+  };
+}
+
+function readAll(handle: FileSystemFileHandle): Promise<Uint8Array> {
+  return handle.getFile().then(f => f.arrayBuffer()).then(b => new Uint8Array(b));
+}
+
+export async function safeGetFileHandle(root: FileSystemDirectoryHandle, name: string): Promise<FileSystemFileHandle> {
+  try {
+    return await root.getFileHandle(name);
+  } catch (e) {
+    const err = e as DOMException;
+    if (err?.name === 'TypeError' && /name is not allowed/i.test(err?.message ?? '')) {
+      for await (const [entryName, entry] of root.entries()) {
+        if (entryName === name && entry.kind === 'file') return entry as FileSystemFileHandle;
+      }
+      throw e;
+    }
+    throw e;
+  }
+}
+
+export function unescapeWindy(s: string | undefined | null): string {
+  if (!s) return '';
+  return s.replace(/u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCodePoint(parseInt(hex, 16)));
+}
+
+const COMMON_HANZI = new Set([
+  '的','一','是','在','不','了','有','人','这','中','大','为','上','个','国','我','以','要','他','时',
+  '来','用','们','生','到','作','地','于','出','就','分','对','成','会','可','主','发','年','动','同',
+  '工','也','能','下','过','子','说','产','种','面','而','方','后','多','定','行','学','法','所','民',
+  '得','经','十','三','之','进','着','等','部','度','家','电','力','里','如','水','化','高','二','理',
+  '起','小','物','现','实','加','量','都','两','体','制','机','当','使','点','从','业','本','去','把',
+  '性','好','应','开','它','合','还','因','由','其','些','然','前','外','天','政','四','日','那','社',
+  '义','事','平','形','相','全','表','间','样','与','关','各','重','新','线','内','数','正','心','反',
+  '你','明','看','原','又','么','利','比','或','但','质','气','第','向','道','命','此','变','条','只',
+  '没','结','解','问','意','建','月','公','无','系','军','很','情','最','手','住','安','知','世','做',
+  '战','斗','攻','击','防','御','魔','法','技','能','道','具','武','器','装','备','角','色','玩','家',
+  '敌','怪','物','地','图','任','务','剧','情','对','话','菜','单','存','档','开','始','结','束',
+  '胜','利','失','败','继','续','重','试','退','出','属','性','状','态','效','果','持','续','回','合',
+  '金','币','钱','元','两','火','焰','寒','冰','雷','电','风','暴','光','明','黑','暗','神','圣','死','亡','生','命',
+  '治','愈','恢','复','净','化','诅','咒','毒','素','麻','痹','睡','眠','混','乱','遗','忘','恐','惧',
+  '剑','刀','枪','弓','盾','杖','书','珠','玉','石','药','草','花','木','土','铁','钢','杀','刺','斩',
+  '射','投','抓','握','拿','举','推','拉','拖','抱','走','跑','跳','飞','游','站','坐','睡','醒','来',
+  '去','进','出','回','离','说','听','读','写','唱','演','奏','玩','干','办','认','思','记','忆','爱',
+  '恋','情','友','亲','恩','义','忠','孝','信','礼','智','勇','仁','德','善','美','真','诚','实','时',
+  '空','世','界','宇','宙','过','现','未','古','今','昨','夜','昼','东','西','南','北','左','右','前',
+  '后','里','外','中','内','风','花','雪','月','春','夏','秋','冬','朝','夕','晴','阴','雨','雾','露',
+  '名','字','称','号','职','业','等','级','经','验','异','常','消','耗','恢','复','召','唤','击','退',
+  '你','我','他','她','它','们','王','公','皇','帝','将','军','帅','兵','马','车','炮','箭','甲','胄',
+  '身','体','心','灵','魂','神','鬼','妖','魔','仙','圣','口','型','眼','光','黑','市','菜','单','白',
+]);
+
+function isCommonHanzi(ch: string): boolean {
+  const cp = ch.codePointAt(0)!;
+  if (cp < 0x4E00 || cp > 0x9FFF) return false;
+  return COMMON_HANZI.has(ch);
+}
+
+interface CharStats {
+  valid: number; other: number; charTotal: number;
+  hasKana: boolean; hasKanji: boolean; hasPunct: boolean;
+  commonHanzi: number; totalHanzi: number; maxHanziRun: number;
+  fullKana: number; halfKana: number;
+}
+
+function scoreCharStats(text: string): CharStats {
+  let valid = 0, other = 0, charTotal = 0;
+  let hasKana = false, hasKanji = false, hasPunct = false;
+  let commonHanzi = 0, totalHanzi = 0;
+  let maxHanziRun = 0, curRun = 0;
+  let fullKana = 0, halfKana = 0;
+
+  for (const ch of text) {
+    charTotal++;
+    const cp = ch.codePointAt(0)!;
+    if (cp < 0x80) {
+      if (cp >= 0x20 && cp <= 0x7E) valid++;
+      else if (cp === 0x09 || cp === 0x0A || cp === 0x0D) valid++;
+      else { other++; curRun = 0; }
+    }
+    else if (cp >= 0x3040 && cp <= 0x30FF) {
+      valid++; hasKana = true; fullKana++; curRun = 0;
+    }
+    else if (cp >= 0x4E00 && cp <= 0x9FFF) {
+      valid++; hasKanji = true; totalHanzi++;
+      if (isCommonHanzi(ch)) commonHanzi++;
+      curRun++;
+      if (curRun > maxHanziRun) maxHanziRun = curRun;
+    }
+    else if (cp >= 0x3400 && cp <= 0x4DBF) {
+      other++; curRun = 0;
+    }
+    else if (cp >= 0x3000 && cp <= 0x303F) {
+      valid++; hasPunct = true; curRun = 0;
+    }
+    else if (cp >= 0xFF00 && cp <= 0xFFEF) {
+      valid++;
+      if (cp >= 0xFF65 && cp <= 0xFF9F) halfKana++;
+      curRun = 0;
+    }
+    else if (cp >= 0x2000 && cp <= 0x206F) { valid++; curRun = 0; }
+    else { other++; curRun = 0; }
+  }
+
+  return { valid, other, charTotal, hasKana, hasKanji, hasPunct, commonHanzi, totalHanzi, maxHanziRun, fullKana, halfKana };
+}
+
+const CANDIDATE_ENCODINGS: EncodingName[] = ['shift_jis', 'gbk', 'euc_jp', 'utf8'];
+
+/**
+ * 从 DB 里提取两类字符串：
+ * - fileRefs：应该匹配磁盘文件名的字段（characterName, faceName, chipsetName, BGM/SE 名...）
+ * - displayTexts：纯显示文本（角色名、道具名、技能名...），用于文本质量评分
+ */
+function splitDbRefs(db: Database): { fileRefs: string[]; displayTexts: string[] } {
+  const fileRefs: string[] = [];
+  const displayTexts: string[] = [];
+  const pushFile = (s: string | undefined | null) => {
+    if (typeof s === 'string' && s.trim()) fileRefs.push(unescapeWindy(s.trim()));
+  };
+  const pushText = (s: string | undefined | null) => {
+    if (typeof s === 'string' && s.trim()) displayTexts.push(unescapeWindy(s.trim()));
+  };
+
+  for (const a of db.actors ?? []) {
+    pushText((a as any).name);
+    pushText((a as any).title);
+    pushFile(a.characterName);
+    pushFile(a.faceName);
+    pushFile((a as any).battlerName);
+  }
+  for (const c of (db as any).classes ?? []) pushText(c.name);
+  for (const cs of db.chipsets ?? []) pushFile(cs.chipsetName);
+  for (const sk of db.skills ?? []) pushText((sk as any).name);
+  for (const it of db.items ?? []) pushText((it as any).name);
+  for (const en of db.enemies ?? []) {
+    pushText((en as any).name);
+    pushFile((en as any).battlerName);
+  }
+  for (const st of db.states ?? []) pushText((st as any).name);
+  for (const tr of db.terrains ?? []) pushText((tr as any).name);
+  for (const at of db.attributes ?? []) pushText((at as any).name);
+  for (const an of db.animations ?? []) {
+    pushText((an as any).name);
+    pushFile((an as any).animationName);
+  }
+  for (const br of (db as any).battleranimations ?? []) pushText(br.name);
+  for (const tp of db.troops ?? []) pushText((tp as any).name);
+  for (const ce of db.commonevents ?? []) pushText((ce as any).name);
+
+  const sys = db.system as unknown as Record<string, string> | undefined;
+  if (sys) {
+    // system 的这几个字段既是文件名引用，也是有意义的文本（含假名/汉字），两边都收
+    for (const k of ['titleName', 'gameoverName', 'systemName', 'system2Name']) {
+      pushFile(sys[k]);
+      pushText(sys[k]);
+    }
+    pushFile(sys.frameName);
+    pushFile((sys as any).battletestBackground);
+    const bgmSeKeys = ['titleMusic','battleMusic','battleEndMusic','innMusic','boatMusic','shipMusic','airshipMusic','gameoverMusic','cursorSe','decisionSe','cancelSe','buzzerSe','battleSe','escapeSe','enemyAttackSe','enemyDamagedSe','actorDamagedSe'];
+    for (const k of bgmSeKeys) {
+      const v = (sys as any)[k];
+      if (v && typeof v === 'object') pushFile(v.name);
+      else pushFile(v);
+    }
+  }
+  return { fileRefs, displayTexts };
+}
+
+function scoreEncoding(
+  ldbBuf: Uint8Array,
+  engine: EngineVersion,
+  enc: EncodingName,
+): { total: number; reasons: string[] } {
+  let db: Database;
+  try {
+    db = decodeDatabase(ldbBuf, { engine, transcoder: makeTranscoder(enc) });
+  } catch { return { total: -1, reasons: ['decode failed'] }; }
+
+  const { displayTexts } = splitDbRefs(db);
+  const reasons: string[] = [];
+  let total = 0;
+
+  if (displayTexts.length > 0) {
+    const allText = displayTexts.join(' ');
+    const s = scoreCharStats(allText);
+
+    if (s.charTotal === 0) {
+      reasons.push('empty');
+    } else {
+      const badRatio = s.other / s.charTotal;
+      total += Math.max(0, 50 - badRatio * 200);
+
+      if (s.hasKanji && s.totalHanzi > 0) {
+        const commonRatio = s.commonHanzi / s.totalHanzi;
+        if (commonRatio >= 0.3) {
+          total += 25;
+          reasons.push(`+25 commonHanzi:${commonRatio.toFixed(2)}`);
+        } else {
+          total -= 25;
+          reasons.push(`-25 rareHanzi:${commonRatio.toFixed(2)}`);
+        }
+        if (s.maxHanziRun >= 3) {
+          total += 10;
+          reasons.push(`+10 hanziRun:${s.maxHanziRun}`);
+        }
+      }
+
+      if (s.fullKana >= 3) {
+        total += 20;
+        reasons.push(`+20 fullKana:${s.fullKana}`);
+      }
+      if (s.hasKana && !s.hasKanji) {
+        total += 15;
+        reasons.push('+15 kanaOnly');
+      }
+      if (s.hasPunct) {
+        total += 5;
+        reasons.push('+5 punct');
+      }
+    }
+  } else {
+    reasons.push('no displayTexts');
+  }
+
+  console.log(`[ENCODE SCORE] ${enc}: ${total.toFixed(1)}  ${reasons.join(' | ')}  sysTitle="${(db.system as any).titleName}" sysName="${(db.system as any).systemName}"`);
+  return { total, reasons };
+}
+
+export function detectEncoding(
+  iniBuf: Uint8Array | null,
+  ldbBuf: Uint8Array | null,
+  engine: EngineVersion = '2k',
+): EncodingName {
+  if (!ldbBuf && !iniBuf) return 'latin1';
+
+  if (!ldbBuf && iniBuf) {
+    let highBytes = 0;
+    for (let i = 0; i < iniBuf.length; i++) if (iniBuf[i] > 0x7F) highBytes++;
+    if (highBytes === 0) return 'latin1';
+    let best: EncodingName = 'latin1';
+    let bestBad = Infinity;
+    for (const enc of CANDIDATE_ENCODINGS) {
+      const text = iconv.decode(iniBuf, ICONV_TO_ENCODING[enc]);
+      const s = scoreCharStats(text);
+      const bad = s.other + (s.charTotal === 0 ? 0 : (1 - s.valid / s.charTotal) * 5);
+      if (bad < bestBad) { bestBad = bad; best = enc; }
+    }
+    return best;
+  }
+
+  if (!ldbBuf) return 'latin1';
+
+  let bestEnc: EncodingName = 'latin1';
+  let bestScore = -Infinity;
+  for (const enc of CANDIDATE_ENCODINGS) {
+    const r = scoreEncoding(ldbBuf, engine, enc);
+    if (r.total > bestScore) { bestScore = r.total; bestEnc = enc; }
+  }
+
+  console.log(`[ENCODE BEST] ${bestEnc} score=${bestScore.toFixed(1)}`);
+  return bestEnc;
+}
+
+export function detectEngine(ldbBuf: Uint8Array): EngineVersion {
+  try {
+    const probe = decodeDatabase(ldbBuf, { engine: '2k' });
+    const sys = probe.system as { ldbId?: number } | undefined;
+    if (sys?.ldbId === 2003) return '2k3';
+    if (probe.classes?.length > 0) return '2k3';
+    return '2k';
+  } catch {
+    return '2k3';
+  }
+}
+
+function parseIni(iniText: string): Record<string, Record<string, string>> {
+  const sections: Record<string, Record<string, string>> = {};
+  let cur = '';
+  for (let line of iniText.split(/\r?\n/)) {
+    line = line.replace(/^\uFEFF/, '').trim();
+    if (!line || line.startsWith(';') || line.startsWith('#')) continue;
+    const m = line.match(/^\[(.+)\]$/);
+    if (m) { cur = m[1].trim(); sections[cur] = {}; continue; }
+    const eq = line.indexOf('=');
+    if (eq > 0) {
+      const key = line.slice(0, eq).trim();
+      const val = line.slice(eq + 1).trim();
+      if (cur) sections[cur][key] = val;
+    }
+  }
+  console.log('[INI PARSE] sections:', Object.keys(sections), 'RPG_RT keys:', sections['RPG_RT'] ? Object.keys(sections['RPG_RT']) : '(none)');
+  if (sections['RPG_RT']?.GameTitle) console.log('[INI PARSE] GameTitle =', JSON.stringify(sections['RPG_RT'].GameTitle));
+  return sections;
+}
+
+export async function loadGameProject(root: FileSystemDirectoryHandle): Promise<ProjectGameData> {
+  const result: ProjectGameData = {
+    rootHandle: root,
+    database: null,
+    treeMap: null,
+    maps: new Map(),
+    mapInfos: new Map(),
+    encoding: 'latin1',
+    engine: '2k',
+    rpgIni: null,
+    rawIni: null,
+  };
+
+  let iniBuf: Uint8Array | null = null;
+  try {
+    const iniHandle = await safeGetFileHandle(root, 'RPG_RT.ini');
+    iniBuf = await readAll(iniHandle);
+    console.log('[INI] found, size=', iniBuf.length, 'first10 hex=', Array.from(iniBuf.slice(0,10)).map(b => b.toString(16).padStart(2,'0')).join(' '));
+  } catch (e) {
+    const err = e as DOMException;
+    if (err?.name === 'NotFoundError') {
+      console.log('[INI] not found (no RPG_RT.ini in project root)');
+    } else {
+      console.error('[INI] read FAILED:', err?.name, err?.message, err);
+    }
+  }
+  result.rawIni = iniBuf;
+
+  let ldbBuf: Uint8Array;
+  try {
+    const ldbHandle = await safeGetFileHandle(root, 'RPG_RT.ldb');
+    ldbBuf = await readAll(ldbHandle);
+  } catch (e) {
+    throw new Error(`无法加载 RPG_RT.ldb: ${(e as Error).message}`);
+  }
+  result.rawLdb = ldbBuf;
+
+  // 详细诊断：试两种 engine 看 version
+  let engine: EngineVersion = '2k';
+  try {
+    const db2k = decodeDatabase(ldbBuf, { engine: '2k' });
+    const sys = db2k.system as { ldbId?: number } | undefined;
+    // 可靠的引擎判断依据（参考 EasyRPG lcf::GetEngineVersion）：
+    // 1. system.ldb_id == 2003 → RPG Maker 2003
+    // 2. classes 数组非空 → 2003（2000 没有这个数组）
+    if (sys?.ldbId === 2003) {
+      engine = '2k3';
+    } else if (db2k.classes?.length > 0) {
+      engine = '2k3';
+    }
+    console.log('[ENGINE DECIDE] ldbId=', sys?.ldbId, 'classes=', db2k.classes?.length, '→', engine);
+  } catch (e) {
+    console.log('[ENGINE PROBE] 2k threw:', e);
+    engine = '2k3';
+  }
+  result.engine = engine;
+
+  const encoding = detectEncoding(iniBuf, ldbBuf, engine);
+  result.encoding = encoding;
+  const transcoder = makeTranscoder(encoding);
+
+  if (iniBuf) {
+    const iniText = transcoder.decode(iniBuf);
+    result.rpgIni = parseIni(iniText);
+  }
+
+  result.database = decodeDatabase(ldbBuf, { engine: result.engine, transcoder });
+
+  try {
+    const lmtHandle = await safeGetFileHandle(root, 'RPG_RT.lmt');
+    const lmtBuf = await readAll(lmtHandle);
+    result.rawLmt = lmtBuf;
+    result.treeMap = decodeTreeMap(lmtBuf, { engine: result.engine, transcoder });
+    if (result.treeMap?.maps) {
+      for (const mi of result.treeMap.maps) {
+        result.mapInfos.set(mi.id, mi);
+      }
+    }
+  } catch { /* no lmt */ }
+
+  let mapIdx = 1;
+  while (true) {
+    const name = `Map${String(mapIdx).padStart(4, '0')}.lmu`;
+    try {
+      const muHandle = await safeGetFileHandle(root, name);
+      const muBuf = await readAll(muHandle);
+      const mu = decodeMapUnit(muBuf, { engine: result.engine, transcoder });
+      result.maps.set(mapIdx, mu);
+      mapIdx++;
+    } catch { break; }
+  }
+
+  return result;
+}
+
+export type { Database, MapUnit, MapInfo, TreeMap };
+
+/**
+ * 用指定编码重新 decode 已加载项目的 LDB/LMT/LMU。
+ * 从磁盘重新读取 bytes（因为磁盘可能被 rename 或 snapshot 改了）。
+ */
+export async function reDecodeWithEncoding(
+  data: ProjectGameData,
+  encoding: string,
+): Promise<ProjectGameData> {
+  const enc = encoding as EncodingName;
+  const transcoder = makeTranscoder(enc);
+  const newData: ProjectGameData = { ...data, encoding: enc };
+
+  if (data.rootHandle) {
+    try {
+      const ldbHandle = await safeGetFileHandle(data.rootHandle, 'RPG_RT.ldb');
+      const ldbBuf = await readAll(ldbHandle);
+      newData.rawLdb = ldbBuf;
+      newData.database = decodeDatabase(ldbBuf, { engine: data.engine, transcoder });
+    } catch {
+      // fallback: 用缓存
+      if (data.rawLdb) {
+        newData.database = decodeDatabase(data.rawLdb, { engine: data.engine, transcoder });
+      }
+    }
+
+    try {
+      const lmtHandle = await safeGetFileHandle(data.rootHandle, 'RPG_RT.lmt');
+      const lmtBuf = await readAll(lmtHandle);
+      newData.rawLmt = lmtBuf;
+      newData.treeMap = decodeTreeMap(lmtBuf, { engine: data.engine, transcoder });
+      newData.mapInfos = new Map();
+      if (newData.treeMap?.maps) {
+        for (const mi of newData.treeMap.maps) {
+          newData.mapInfos.set(mi.id, mi);
+        }
+      }
+    } catch {
+      if (data.rawLmt) {
+        newData.treeMap = decodeTreeMap(data.rawLmt, { engine: data.engine, transcoder });
+      }
+    }
+
+    try {
+      const iniHandle = await safeGetFileHandle(data.rootHandle, 'RPG_RT.ini');
+      const iniBuf = await readAll(iniHandle);
+      newData.rawIni = iniBuf;
+      newData.rpgIni = parseIni(transcoder.decode(iniBuf));
+      console.log('[RE-DECODE INI] OK, size=', iniBuf.length);
+    } catch (e) {
+      const err = e as DOMException;
+      console.warn('[RE-DECODE INI] failed:', err?.name, err?.message);
+      if (data.rawIni) {
+        newData.rpgIni = parseIni(transcoder.decode(data.rawIni));
+        console.log('[RE-DECODE INI] fallback used cached rawIni');
+      }
+    }
+
+    // LMU 一直是从磁盘读的
+    newData.maps = new Map();
+    let mapIdx = 1;
+    while (true) {
+      const name = `Map${String(mapIdx).padStart(4, '0')}.lmu`;
+      try {
+        const muHandle = await safeGetFileHandle(data.rootHandle, name);
+        const muBuf = await readAll(muHandle);
+        const mu = decodeMapUnit(muBuf, { engine: data.engine, transcoder });
+        newData.maps.set(mapIdx, mu);
+        mapIdx++;
+      } catch { break; }
+    }
+  } else {
+    // 没有 rootHandle，只能用缓存
+    if (data.rawLdb) {
+      newData.database = decodeDatabase(data.rawLdb, { engine: data.engine, transcoder });
+    }
+    if (data.rawLmt) {
+      newData.treeMap = decodeTreeMap(data.rawLmt, { engine: data.engine, transcoder });
+    }
+  }
+
+  return newData;
+}

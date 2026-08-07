@@ -1,0 +1,955 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useStore } from './store/useStore';
+import { loadGameProject, reDecodeWithEncoding } from './core/lcfLoader';
+import { scanProjectAssets } from './scanner/assetScanner';
+import { traceAllReferences } from './core/referenceTracker';
+import { renameAsset } from './core/renameEngine';
+import { deleteAssets } from './core/deleteEngine';
+import { listSnapshots, restoreSnapshot } from './core/snapshot';
+import type { SnapshotInfo } from './core/snapshot';
+import AssetPreview from './components/AssetPreview';
+import AssetDetail from './components/AssetDetail';
+import VirtualGrid from './components/VirtualGrid';
+import type { AssetAnalysis } from './types/index';
+
+const CORE_CATEGORIES = [
+  'ChipSet','CharSet','FaceSet',
+  'Backdrop','Battle','Monster',
+  'Panorama','Picture',
+  'System','Title','GameOver','Frame',
+  'Music','Sound','Movie',
+] as const;
+
+const V2K3_ONLY = ['Battle2','BattleCharSet','BattleWeapon','System2'] as const;
+
+function getCategories(engine: '2k' | '2k3'): readonly string[] {
+  return engine === '2k3'
+    ? [...CORE_CATEGORIES, ...V2K3_ONLY]
+    : CORE_CATEGORIES;
+}
+
+const batchBtnStyle: React.CSSProperties = {
+  padding: '4px 10px', fontSize: 12, borderRadius: 4,
+  border: '1px solid var(--color-border)', background: 'var(--color-bg-elev)', color: 'var(--color-text)',
+  cursor: 'pointer',
+};
+
+type Theme = 'dark' | 'light';
+const _savedTheme = (typeof localStorage !== 'undefined' ? localStorage.getItem('rmm-theme') : null) as Theme | null;
+const initialTheme: Theme = _savedTheme ?? 'dark';
+
+function WorkspaceSelector({
+  onOpen, onClose, assetCount, mapCount, onEncodingChange,
+}: {
+  onOpen: () => void;
+  onClose: () => void;
+  assetCount: number;
+  mapCount: number;
+  onEncodingChange: (enc: string) => void;
+}) {
+  const { gameData, loading, error } = useStore();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const { projectName, iniStatus } = (() => {
+    const ini = gameData?.rpgIni;
+    if (!ini) return { projectName: '', iniStatus: 'missing' as const };
+    const t1 = ini['RPG_RT']?.GameTitle?.trim();
+    if (t1) return { projectName: t1, iniStatus: 'ok' as const };
+    const t2 = ini['Game']?.GameTitle?.trim();
+    if (t2) return { projectName: t2, iniStatus: 'ok' as const };
+    return { projectName: '', iniStatus: 'no-title' as const };
+  })();
+
+  const dirName = gameData?.rootHandle?.name || '';
+
+  return (
+    <div ref={menuRef} style={{ position: 'relative' }}>
+      <button
+        onClick={() => setMenuOpen(!menuOpen)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          padding: '5px 12px', fontSize: 13, fontWeight: 500,
+          background: gameData ? 'var(--color-bg-elev)' : 'transparent',
+          border: gameData ? '1px solid var(--color-border)' : '1px dashed var(--color-text-dim)',
+          borderRadius: 6, cursor: 'pointer',
+          color: gameData ? 'var(--color-text)' : 'var(--color-text-muted)',
+          maxWidth: 360,
+        }}
+      >
+        <span style={{ filter: 'grayscale(1)', opacity: 0.8 }}>📁</span>
+        <span style={{
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          flex: 1, textAlign: 'left',
+        }}>
+          {gameData
+            ? (projectName || dirName || '未命名项目')
+            : '打开项目'}
+        </span>
+        <span style={{ color: 'var(--color-text-muted)', fontSize: 11 }}>▾</span>
+      </button>
+
+      {menuOpen && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, marginTop: 4,
+          minWidth: 320, background: 'var(--color-bg-elev)',
+          border: '1px solid var(--color-border)', borderRadius: 8,
+          boxShadow: '0 10px 25px rgba(0,0,0,0.1)', zIndex: 1000,
+          padding: 8,
+        }}>
+          {error && (
+            <div style={{ padding: '6px 10px', background: 'var(--color-danger-soft)', color: 'var(--color-danger)', borderRadius: 4, fontSize: 12, marginBottom: 6 }}>
+              {error}
+            </div>
+          )}
+          {loading ? (
+            <div style={{ padding: 12, textAlign: 'center', color: 'var(--color-text-muted)', fontSize: 13 }}>
+              加载中...
+            </div>
+          ) : gameData ? (
+            <>
+              <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--color-bg-hover)', marginBottom: 4 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: iniStatus === 'missing' ? 'var(--color-warning-text)' : 'var(--color-text)', marginBottom: 4, wordBreak: 'break-all' }}>
+                  {projectName || (iniStatus === 'missing' ? 'INI 读取被拒绝' : '未设置 GameTitle')}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--color-text-muted)', fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                  {dirName}
+                </div>
+              </div>
+
+              <div style={{
+                display: 'grid', gridTemplateColumns: '1fr 1fr',
+                gap: '4px 12px', padding: '4px 10px 10px',
+                fontSize: 12,
+              }}>
+                <div><span style={{ color: 'var(--color-text-muted)' }}>引擎</span><br /><b>{gameData.engine === '2k' ? 'RPG Maker 2000' : 'RPG Maker 2003'}</b></div>
+                <div>
+                  <span style={{ color: 'var(--color-text-muted)' }}>编码</span><br />
+                  <select
+                    value={gameData.encoding}
+                    onChange={e => { onEncodingChange(e.target.value); }}
+                    style={{
+                      padding: '2px 6px', fontSize: 12, border: '1px solid var(--color-border)',
+                      borderRadius: 4, background: 'var(--color-bg-elev)', cursor: 'pointer',
+                    }}
+                  >
+                    <option value="shift_jis">Shift_JIS</option>
+                    <option value="gbk">GBK</option>
+                    <option value="euc_jp">EUC-JP</option>
+                    <option value="utf8">UTF-8</option>
+                    <option value="latin1">Latin-1</option>
+                  </select>
+                </div>
+                <div><span style={{ color: 'var(--color-text-muted)' }}>素材总数</span><br /><b>{assetCount}</b></div>
+                <div><span style={{ color: 'var(--color-text-muted)' }}>地图数</span><br /><b>{mapCount}</b></div>
+                <div><span style={{ color: 'var(--color-text-muted)' }}>角色数</span><br /><b>{gameData.database?.actors?.length ?? 0}</b></div>
+                <div><span style={{ color: 'var(--color-text-muted)' }}>数据库</span><br /><b>{(gameData.database ? '已加载' : '—')}</b></div>
+              </div>
+
+              <div style={{ borderTop: '1px solid var(--color-bg-hover)', paddingTop: 4 }}>
+                <button
+                  onClick={() => { setMenuOpen(false); onOpen(); }}
+                  style={{
+                    width: '100%', padding: '8px 10px', textAlign: 'left',
+                    background: 'transparent', border: 'none',
+                    cursor: 'pointer', fontSize: 13, color: 'var(--color-text)',
+                    borderRadius: 4,
+                  }}
+                  onMouseEnter={e => ((e.target as HTMLElement).style.background = 'var(--color-bg-hover)')}
+                  onMouseLeave={e => ((e.target as HTMLElement).style.background = 'transparent')}
+                >
+                  切换目录...
+                </button>
+                <button
+                  onClick={() => { setMenuOpen(false); onClose(); }}
+                  style={{
+                    width: '100%', padding: '8px 10px', textAlign: 'left',
+                    background: 'transparent', border: 'none',
+                    cursor: 'pointer', fontSize: 13, color: 'var(--color-danger)',
+                    borderRadius: 4,
+                  }}
+                  onMouseEnter={e => ((e.target as HTMLElement).style.background = 'var(--color-danger-soft)')}
+                  onMouseLeave={e => ((e.target as HTMLElement).style.background = 'transparent')}
+                >
+                  关闭项目
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{ padding: '10px 12px', color: 'var(--color-text-muted)', fontSize: 13 }}>
+                未打开项目
+              </div>
+              <button
+                onClick={() => { setMenuOpen(false); onOpen(); }}
+                style={{
+                  width: '100%', padding: '8px 10px', textAlign: 'left',
+                  background: 'transparent', border: 'none',
+                  cursor: 'pointer', fontSize: 13, color: 'var(--color-primary-text)',
+                  borderRadius: 4,
+                }}
+                onMouseEnter={e => ((e.target as HTMLElement).style.background = 'var(--color-primary-soft)')}
+                onMouseLeave={e => ((e.target as HTMLElement).style.background = 'transparent')}
+              >
+                选择目录...
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function App() {
+  const {
+    gameData, setGameData,
+    assets, setAssets,
+    analyses, setAnalyses,
+    activeCategory, setActiveCategory,
+    filterUsed, setFilterUsed,
+    selectedAssetKey, setSelectedAssetKey,
+    loading, setLoading,
+    setError,
+  } = useStore();
+
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    scrollContainerRef.current?.scrollTo(0, 0);
+  }, [activeCategory, filterUsed]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.key === 'F5' || (e.ctrlKey && e.key.toLowerCase() === 'r')) && gameData) {
+        e.preventDefault();
+        handleRefreshProject();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [gameData]);
+
+  async function loadFromRoot(root: FileSystemDirectoryHandle, opts?: { keepState?: boolean; encoding?: string }) {
+    const { keepState = false, encoding } = opts ?? {};
+    const key = (cat: string, stem: string) => `${cat}/${stem.toLowerCase()}`;
+    try {
+      setError(null);
+
+      if (!keepState) {
+        setSelectedAssetKey(null);
+        setAssets([]);
+        setAnalyses(new Map());
+        setFilterUsed('all');
+        setGameData(null);
+      }
+      setLoading(true);
+
+      await new Promise(r => requestAnimationFrame(() => setTimeout(r, 16)));
+
+      let data = await loadGameProject(root);
+      if (encoding && encoding !== data.encoding) {
+        data = await reDecodeWithEncoding(data, encoding);
+      }
+      setGameData(data);
+
+      await new Promise(r => requestAnimationFrame(() => setTimeout(r, 16)));
+
+      const t0 = performance.now();
+      const found = await scanProjectAssets(root);
+      console.log(`[性能] scanProjectAssets: ${(performance.now() - t0).toFixed(0)}ms · ${found.length} files`);
+      setAssets(found);
+
+      const stems = new Set<string>();
+      for (const a of found) stems.add(a.stem.toLowerCase());
+
+      const t1 = performance.now();
+      const refs = traceAllReferences(data);
+      console.log(`[性能] traceAllReferences: ${(performance.now() - t1).toFixed(0)}ms · ${refs.length} refs`);
+
+      const map = new Map<string, AssetAnalysis>();
+      for (const a of found) {
+        map.set(key(a.category, a.stem), { asset: a, references: [], inDatabase: false, onDisk: true });
+      }
+      for (const ref of refs) {
+        const k = key(ref.category, ref.assetName);
+        const entry = map.get(k);
+        if (entry) {
+          entry.references.push(ref);
+          entry.inDatabase = true;
+        }
+      }
+      setAnalyses(map);
+
+      console.group('[诊断] 项目加载');
+      console.log('编码:', data.encoding, '引擎:', data.engine, '素材:', found.length, '引用:', refs.length);
+      if (data.database) {
+        const sampleChars = data.database.actors?.slice(0, 5).map(a => ({ id: a.id, characterName: a.characterName, faceName: a.faceName, matchDisk: stems.has(a.characterName?.toLowerCase() ?? '') }));
+        console.log('Actress 样本:', sampleChars);
+      }
+      const unmatchedRefs = refs.filter(r => !map.has(key(r.category, r.assetName)));
+      if (unmatchedRefs.length > 0) {
+        console.groupCollapsed(`${unmatchedRefs.length} 个引用未匹配到磁盘`);
+        for (const r of unmatchedRefs.slice(0, 20)) console.log(`  [${r.category}] "${r.assetName}" @`, r.location);
+        console.groupEnd();
+      }
+      console.groupEnd();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleOpenProject() {
+    try {
+      const root = await window.showDirectoryPicker({ mode: 'readwrite' });
+      await loadFromRoot(root);
+    } catch (e) {
+      if ((e as Error).message?.includes('The user aborted')) return;
+      setError((e as Error).message);
+    }
+  }
+
+  async function handleRefreshProject() {
+    if (!gameData?.rootHandle) return;
+    await loadFromRoot(gameData.rootHandle, { keepState: true, encoding: gameData.encoding });
+  }
+
+  function handleCloseProject() {
+    setGameData(null);
+    setAssets([]);
+    setAnalyses(new Map());
+    setSelectedAssetKey(null);
+    setFilterUsed('all');
+  }
+
+  async function handleEncodingChange(enc: string) {
+    if (!gameData) return;
+    setLoading(true);
+    try {
+      // 重新 decode DB + maps
+      const newData = await reDecodeWithEncoding(gameData, enc);
+      setGameData(newData);
+
+      // 重跑引用追踪
+      const refs = traceAllReferences(newData);
+      const key = (cat: string, stem: string) => `${cat}/${stem.toLowerCase()}`;
+      const map = new Map<string, AssetAnalysis>();
+      for (const a of assets) {
+        map.set(key(a.category, a.stem), { asset: a, references: [], inDatabase: false, onDisk: true });
+      }
+      for (const ref of refs) {
+        const k = key(ref.category, ref.assetName);
+        const entry = map.get(k);
+        if (entry) {
+          entry.references.push(ref);
+          entry.inDatabase = true;
+        }
+      }
+      setAnalyses(map);
+
+      console.log(`[ENCODE SWITCH] → ${enc}, refs=${refs.length}`);
+    } catch (e) {
+      console.error('reDecode failed:', e);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const filteredAssets = useMemo(() => assets.filter(a => {
+    if (a.category !== activeCategory) return false;
+    const entry = analyses.get(`${a.category}/${a.stem.toLowerCase()}`);
+    if (filterUsed === 'used') return entry?.inDatabase;
+    if (filterUsed === 'unused') return !entry?.inDatabase;
+    return true;
+  }), [assets, activeCategory, filterUsed, analyses]);
+
+  const selectedAsset = selectedAssetKey ? analyses.get(selectedAssetKey)?.asset ?? null : null;
+  const selectedAnalysis = selectedAssetKey ? analyses.get(selectedAssetKey) ?? null : null;
+
+  const catCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const a of assets) m.set(a.category, (m.get(a.category) || 0) + 1);
+    return m;
+  }, [assets]);
+
+  const mapCount = gameData?.maps?.size ?? 0;
+
+  const [renaming, setRenaming] = useState(false);
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
+  const [deleting, setDeleting] = useState(false);
+  const [theme, setTheme] = useState<Theme>(initialTheme);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem('rmm-theme', theme);
+  }, [theme]);
+
+  function toggleSelect(k: string) {
+    setSelectedKeys(prev => {
+      const next = new Set(prev);
+      if (next.has(k)) next.delete(k); else next.add(k);
+      return next;
+    });
+  }
+
+  function selectAllFiltered() {
+    setSelectedKeys(new Set(filteredAssets.map(a => `${a.category}/${a.stem.toLowerCase()}`)));
+  }
+
+  function invertSelection() {
+    const all = new Set(filteredAssets.map(a => `${a.category}/${a.stem.toLowerCase()}`));
+    setSelectedKeys(prev => {
+      const next = new Set<string>();
+      for (const k of all) if (!prev.has(k)) next.add(k);
+      return next;
+    });
+  }
+
+  async function handleRename(newStem: string) {
+    if (!gameData || !selectedAnalysis) return;
+    setRenaming(true);
+    try {
+      const result = await renameAsset(gameData, selectedAnalysis.asset, newStem);
+      if (!result.success) {
+        alert('重命名失败：' + result.message);
+        return;
+      }
+
+      // 更新 assets 里对应的条目（需要拿到 move 后的新 FileHandle）
+      const oldAsset = selectedAnalysis.asset;
+      const newFileName = newStem + oldAsset.ext;
+      let newHandle = oldAsset.handle;
+      try {
+        const dirName = oldAsset.path.split('/')[0];
+        const dirHandle = await gameData.rootHandle!.getDirectoryHandle(dirName);
+        newHandle = await dirHandle.getFileHandle(newFileName);
+      } catch (e) {
+        console.warn('重命名后无法重新打开文件句柄：', e);
+      }
+      const newAsset = {
+        ...oldAsset,
+        name: newFileName,
+        stem: newStem,
+        path: oldAsset.path.replace(/[^/]+$/, newFileName),
+        handle: newHandle,
+      };
+      const newAssets = assets.map(a =>
+        a.name === oldAsset.name && a.path === oldAsset.path ? newAsset : a,
+      );
+      setAssets(newAssets);
+
+      // 重跑引用分析
+      const refs = traceAllReferences(gameData);
+      const key = (cat: string, stem: string) => `${cat}/${stem.toLowerCase()}`;
+      const map = new Map<string, AssetAnalysis>();
+      for (const a of newAssets) {
+        map.set(key(a.category, a.stem), { asset: a, references: [], inDatabase: false, onDisk: true });
+      }
+      for (const ref of refs) {
+        const k = key(ref.category, ref.assetName);
+        const entry = map.get(k);
+        if (entry) {
+          entry.references.push(ref);
+          entry.inDatabase = true;
+        }
+      }
+      setAnalyses(map);
+
+      // 选中新 key
+      const newKey = key(newAsset.category, newAsset.stem);
+      setSelectedAssetKey(newKey);
+    } catch (e) {
+      alert('重命名出错：' + (e as Error).message);
+    } finally {
+      setRenaming(false);
+    }
+  }
+
+  // ===== 快照/撤销 =====
+  const [snapshots, setSnapshots] = useState<SnapshotInfo[]>([]);
+  const [snapMenuOpen, setSnapMenuOpen] = useState(false);
+  const snapMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const h = (e: MouseEvent) => {
+      if (snapMenuRef.current && !snapMenuRef.current.contains(e.target as Node)) setSnapMenuOpen(false);
+    };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, []);
+
+  async function refreshSnapshots() {
+    if (!gameData?.rootHandle) return;
+    const list = await listSnapshots(gameData.rootHandle);
+    setSnapshots(list);
+  }
+
+  // 每次重命名后刷新快照列表
+  useEffect(() => {
+    if (gameData?.rootHandle) refreshSnapshots();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameData?.rootHandle, analyses]);
+
+  async function handleRestoreSnapshot(snap: SnapshotInfo) {
+    if (!gameData?.rootHandle) return;
+    const ok = confirm(`恢复此快照？\n\n${snap.label || snap.dirName}\n\n涉及 ${snap.files.length} 个文件，恢复后当前磁盘上的修改将被覆盖。`);
+    if (!ok) return;
+
+    setLoading(true);
+    try {
+      // 1. 恢复磁盘文件
+      const success = await restoreSnapshot(gameData.rootHandle, snap);
+      if (!success) throw new Error('快照目录损坏或已删除');
+
+      // 2. 从磁盘重新 decode（全部 await 完）
+      const newData = await reDecodeWithEncoding(gameData, gameData.encoding);
+
+      // 3. 重扫磁盘 assets
+      const found = await scanProjectAssets(gameData.rootHandle);
+
+      // 4. 重跑引用追踪（用新 decode 的 data）
+      const refs = traceAllReferences(newData);
+      const key = (cat: string, stem: string) => `${cat}/${stem.toLowerCase()}`;
+      const map = new Map<string, AssetAnalysis>();
+      for (const a of found) {
+        map.set(key(a.category, a.stem), { asset: a, references: [], inDatabase: false, onDisk: true });
+      }
+      for (const ref of refs) {
+        const k = key(ref.category, ref.assetName);
+        const entry = map.get(k);
+        if (entry) { entry.references.push(ref); entry.inDatabase = true; }
+      }
+
+      // 5. 全部准备好再一次性更新 store（绝不出现半更新状态）
+      setGameData(newData);
+      setAssets(found);
+      setAnalyses(map);
+      setSelectedAssetKey(null);
+
+      console.log(`[SNAPSHOT RESTORE] ← ${snap.dirName}, refs=${refs.length}`);
+      await refreshSnapshots();
+    } catch (e) {
+      console.error('[SNAPSHOT RESTORE FAILED]', e);
+      alert('恢复出错：' + (e as Error).message);
+    } finally {
+      setLoading(false);
+      setSnapMenuOpen(false);
+    }
+  }
+
+  async function handleDeleteSelected() {
+    if (!gameData || selectedKeys.size === 0) return;
+
+    const toDelete = Array.from(selectedKeys).map(k => analyses.get(k)?.asset).filter(Boolean) as typeof assets;
+    if (toDelete.length === 0) return;
+
+    const usedOnes = toDelete.filter(a => {
+      const entry = analyses.get(`${a.category}/${a.stem.toLowerCase()}`);
+      return entry?.inDatabase;
+    });
+
+    if (usedOnes.length > 0) {
+      const names = usedOnes.slice(0, 10).map(a => `  · ${a.category}/${a.name}`).join('\n');
+      const more = usedOnes.length > 10 ? `\n  ... 还有 ${usedOnes.length - 10} 个` : '';
+      const ok = confirm(
+        `其中 ${usedOnes.length} 个素材仍被引用！\n` +
+        `删除它们会自动清除数据库/地图中的引用。\n\n` +
+        `将被删除的已使用素材：\n${names}${more}\n\n` +
+        `确定继续？（操作前会自动创建快照）`
+      );
+      if (!ok) return;
+    } else {
+      const ok = confirm(`确定删除选中的 ${toDelete.length} 个未使用素材？\n操作前会自动创建快照。`);
+      if (!ok) return;
+    }
+
+    setDeleting(true);
+    setLoading(true);
+    try {
+      const result = await deleteAssets(gameData, toDelete, true);
+      if (!result.success && !result.filesDeleted.length) {
+        alert('删除失败：' + result.message);
+        return;
+      }
+
+      // 从磁盘重扫（有文件被删了）
+      const found = await scanProjectAssets(gameData.rootHandle!);
+
+      // 重跑引用追踪
+      const refs = traceAllReferences(gameData);
+      const key = (cat: string, stem: string) => `${cat}/${stem.toLowerCase()}`;
+      const map = new Map<string, AssetAnalysis>();
+      for (const a of found) {
+        map.set(key(a.category, a.stem), { asset: a, references: [], inDatabase: false, onDisk: true });
+      }
+      for (const ref of refs) {
+        const k = key(ref.category, ref.assetName);
+        const entry = map.get(k);
+        if (entry) { entry.references.push(ref); entry.inDatabase = true; }
+      }
+
+      setAssets(found);
+      setAnalyses(map);
+      setSelectedKeys(new Set());
+      setSelectedAssetKey(null);
+
+      console.log(`[DELETE] ${result.message}`);
+      await refreshSnapshots();
+
+      if (!result.success) {
+        // 部分失败
+        alert(`部分删除成功：${result.message}`);
+      }
+    } catch (e) {
+      console.error('[DELETE FAILED]', e);
+      alert('删除出错：' + (e as Error).message);
+    } finally {
+      setDeleting(false);
+      setLoading(false);
+    }
+  }
+
+  function formatTime(ts: number) {
+    const d = new Date(ts);
+    return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', fontFamily: 'system-ui, sans-serif', background: 'var(--color-bg)' }}>
+      <header style={{
+        padding: '10px 20px', borderBottom: '1px solid var(--color-border)',
+        display: 'flex', gap: 14, alignItems: 'center',
+        background: 'var(--color-bg-elev)',
+      }}>
+        <h1 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: 'var(--color-text)', letterSpacing: -0.2 }}>
+          RMM
+        </h1>
+        <div style={{ width: 1, height: 24, background: 'var(--color-border)' }} />
+        <WorkspaceSelector
+          onOpen={handleOpenProject}
+          onClose={handleCloseProject}
+          assetCount={assets.length}
+          mapCount={mapCount}
+          onEncodingChange={handleEncodingChange}
+        />
+        {gameData && (
+          <div ref={snapMenuRef} style={{ position: 'relative' }}>
+            <button
+              onClick={async () => { setSnapMenuOpen(!snapMenuOpen); await refreshSnapshots(); }}
+              style={{
+                padding: '5px 10px', fontSize: 12,
+                background: 'var(--color-bg-elev)', border: '1px solid var(--color-border)',
+                borderRadius: 6, cursor: 'pointer', color: 'var(--color-text)',
+                display: 'flex', alignItems: 'center', gap: 4,
+                opacity: snapshots.length === 0 ? 0.5 : 1,
+              }}
+              title={snapshots.length > 0 ? `撤销最近 ${snapshots.length} 次修改` : '暂无快照'}
+            >
+              ↶ 撤销
+              {snapshots.length > 0 && (
+                <span style={{
+                  background: 'var(--color-primary-soft)', color: 'var(--color-primary-text)',
+                  borderRadius: 10, padding: '0 6px', fontSize: 10,
+                  minWidth: 16, textAlign: 'center',
+                }}>{snapshots.length}</span>
+              )}
+            </button>
+            {snapMenuOpen && (
+              <div style={{
+                position: 'absolute', top: '100%', left: 0, marginTop: 4,
+                minWidth: 280, maxWidth: 340, maxHeight: 340, overflowY: 'auto',
+                background: 'var(--color-bg-elev)', border: '1px solid var(--color-border)', borderRadius: 8,
+                boxShadow: '0 10px 25px rgba(0,0,0,0.1)', zIndex: 1000, padding: 4,
+              }}>
+                {snapshots.length === 0 ? (
+                  <div style={{ padding: '16px 12px', color: 'var(--color-text-muted)', fontSize: 12, textAlign: 'center' }}>
+                    暂无快照。
+                  </div>
+                ) : (
+                  snapshots.map(s => (
+                    <button
+                      key={s.dirName}
+                      onClick={() => handleRestoreSnapshot(s)}
+                      style={{
+                        display: 'block', width: '100%', textAlign: 'left',
+                        padding: '8px 10px', border: 'none', background: 'transparent',
+                        cursor: 'pointer', borderRadius: 4,
+                      }}
+                      onMouseEnter={e => ((e.target as HTMLElement).style.background = 'var(--color-bg-hover)')}
+                      onMouseLeave={e => ((e.target as HTMLElement).style.background = 'transparent')}
+                    >
+                      <div style={{ fontSize: 13, color: 'var(--color-text)', fontWeight: 500 }}>
+                        {s.label || s.dirName}
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 2 }}>
+                        {formatTime(s.timestamp)} · {s.files.length} 个文件
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+        )}
+        <div style={{ flex: 1 }} />
+        {loading && (
+          <span style={{ fontSize: 12, color: 'var(--color-text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{
+              width: 12, height: 12, border: '2px solid var(--color-border)',
+              borderTopColor: 'var(--color-primary)', borderRadius: '50%',
+              animation: 'spin 0.8s linear infinite',
+            }} />
+            加载中...
+          </span>
+        )}
+        {gameData && (
+          <button
+            onClick={handleRefreshProject}
+            disabled={loading}
+            title="刷新项目数据（F5）"
+            style={{
+              width: 30, height: 30, fontSize: 16,
+              background: 'transparent', border: '1px solid var(--color-border)',
+              borderRadius: 6, cursor: loading ? 'not-allowed' : 'pointer',
+              color: loading ? 'var(--color-text-dim)' : 'var(--color-text)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+            ↻
+          </button>
+        )}
+        <button
+          onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+          title={theme === 'dark' ? '切换到亮色' : '切换到暗色'}
+          style={{
+            width: 30, height: 30, fontSize: 16,
+            background: 'transparent', border: '1px solid var(--color-border)',
+            borderRadius: 6, cursor: 'pointer',
+            color: 'var(--color-text)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+        >
+          {theme === 'dark' ? '☀' : '☾'}
+        </button>
+      </header>
+
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+        <aside style={{ width: 170, borderRight: '1px solid var(--color-border)', padding: 10, overflowY: 'auto', background: 'var(--color-bg-subtle)' }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6, paddingLeft: 6 }}>素材类别</div>
+          {getCategories(gameData?.engine ?? '2k3').map(cat => {
+            const cnt = catCounts.get(cat) || 0;
+            const isActive = activeCategory === cat;
+            return (
+              <button
+                key={cat}
+                onClick={() => { setActiveCategory(cat); setSelectedAssetKey(null); }}
+                disabled={!gameData}
+                style={{
+                  display: 'flex', justifyContent: 'space-between',
+                  width: '100%', padding: '7px 12px', margin: '1px 0',
+                  background: isActive ? 'var(--color-primary-soft)' : 'transparent',
+                  border: isActive ? '1px solid var(--color-primary)' : '1px solid transparent',
+                  borderRadius: 5, textAlign: 'left',
+                  cursor: gameData ? 'pointer' : 'not-allowed',
+                  fontSize: 13, color: gameData ? 'var(--color-text)' : 'var(--color-text-muted)',
+                  opacity: gameData ? 1 : 0.5,
+                }}
+              >
+                <span>{cat}</span>
+                <span style={{
+                  color: cnt > 0 ? 'var(--color-text-muted)' : 'var(--color-border)',
+                  fontSize: 11,
+                  background: cnt > 0 ? 'var(--color-bg-hover)' : 'transparent',
+                  padding: '1px 6px', borderRadius: 10,
+                }}>{cnt}</span>
+              </button>
+            );
+          })}
+        </aside>
+
+        <main style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--color-border)', background: 'var(--color-bg-elev)' }}>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>筛选</span>
+                {(['all','used','unused'] as const).map(f => (
+                  <button key={f} onClick={() => { setFilterUsed(f); setSelectedKeys(new Set()); }} disabled={!gameData} style={{
+                    padding: '4px 12px', border: '1px solid var(--color-border)',
+                    background: filterUsed === f ? 'var(--color-text)' : 'var(--color-bg-elev)',
+                    color: filterUsed === f ? 'var(--color-text-inverse)' : 'var(--color-text)',
+                    fontSize: 12, borderRadius: 4,
+                    cursor: gameData ? 'pointer' : 'not-allowed',
+                    opacity: gameData ? 1 : 0.5,
+                    transition: 'all 0.15s',
+                  }}>
+                    {f === 'all' ? '全部' : f === 'used' ? '已使用' : '未使用'}
+                  </button>
+                ))}
+                <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--color-text-muted)' }}>
+                  {filteredAssets.length} 项
+                </span>
+                {gameData && filteredAssets.length > 0 && selectedKeys.size === 0 && (
+                  <button
+                    onClick={selectAllFiltered}
+                    style={{ ...batchBtnStyle, fontSize: 11 }}
+                    title="全选当前筛选结果"
+                  >选择</button>
+                )}
+              </div>
+              {gameData && filteredAssets.length > 0 && selectedKeys.size > 0 && (
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 8 }}>
+                  <span style={{ fontSize: 12, color: 'var(--color-text-muted)', marginRight: 4 }}>已选 {selectedKeys.size}：</span>
+                  <button onClick={selectAllFiltered} style={batchBtnStyle} title="全选当前筛选结果">全选</button>
+                  <button onClick={invertSelection} style={batchBtnStyle} title="反选">反选</button>
+                  <button onClick={() => setSelectedKeys(new Set())} style={{ ...batchBtnStyle, background: 'var(--color-bg-elev)', border: '1px solid var(--color-border)' }}>
+                    取消
+                  </button>
+                  <div style={{ flex: 1 }} />
+                  <button
+                    onClick={handleDeleteSelected}
+                    disabled={deleting}
+                    style={{
+                      padding: '5px 14px', fontSize: 12, borderRadius: 4,
+                      border: 'none', cursor: deleting ? 'not-allowed' : 'pointer',
+                      background: deleting ? 'var(--color-text-muted)' : 'var(--color-danger)', color: 'var(--color-text-inverse)',
+                      fontWeight: 500,
+                    }}
+                  >
+                    {deleting ? '删除中...' : `删除选中`}
+                  </button>
+                </div>
+              )}
+            </div>
+            <div ref={scrollContainerRef} style={{ flex: 1, overflow: 'auto', padding: 14 }}>
+              {loading ? (
+                <div style={{ textAlign: 'center', marginTop: 60, color: 'var(--color-text-muted)' }}>
+                  <div style={{
+                    width: 44, height: 44, border: '3px solid var(--color-border)',
+                    borderTopColor: 'var(--color-primary)', borderRadius: '50%',
+                    animation: 'spin 0.8s linear infinite',
+                    margin: '0 auto 18px',
+                  }} />
+                  <p style={{ fontSize: 15, margin: 0, fontWeight: 500, color: 'var(--color-text)' }}>
+                    {gameData ? '正在扫描素材目录...' : '正在加载项目...'}
+                  </p>
+                  <p style={{ fontSize: 12, margin: '6px 0 0', color: 'var(--color-text-muted)' }}>
+                    {gameData ? '解析数据库引用 · 建立引用索引' : '读取 RPG_RT.ldb · 检测编码 · 解码地图'}
+                  </p>
+                </div>
+              ) : !gameData ? (
+                <div style={{ textAlign: 'center', marginTop: 60, color: 'var(--color-text-muted)' }}>
+                  <p style={{ fontSize: 14, margin: '0 0 8px' }}>请先打开一个 RPG Maker 2000 / 2003 项目</p>
+                </div>
+              ) : filteredAssets.length === 0 ? (
+                <div style={{ textAlign: 'center', marginTop: 60, color: 'var(--color-text-muted)', fontSize: 13 }}>
+                  该类别下没有素材
+                </div>
+              ) : (
+                <VirtualGrid
+                  items={filteredAssets}
+                  scrollContainerRef={scrollContainerRef}
+                  cardMinWidth={210}
+                  gap={10}
+                  cardHeight={90}
+                  renderItem={(a) => {
+                    const k = `${a.category}/${a.stem.toLowerCase()}`;
+                    const entry = analyses.get(k);
+                    const isSel = k === selectedAssetKey;
+                    const isBatchSel = selectedKeys.has(k);
+                    const inBatchMode = selectedKeys.size > 0;
+                    const isXyz = a.ext === '.xyz';
+
+                    function handleCardClick(e: React.MouseEvent) {
+                      if (e.shiftKey || inBatchMode) {
+                        toggleSelect(k);
+                      } else {
+                        setSelectedAssetKey(k);
+                      }
+                    }
+
+                    return (
+                      <div
+                        onClick={handleCardClick}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          toggleSelect(k);
+                        }}
+                        style={{
+                          listStyle: 'none',
+                          border: isBatchSel ? '2px solid var(--color-danger)' : isSel ? '2px solid var(--color-primary)' : '1px solid var(--color-border)',
+                          background: isBatchSel ? 'var(--color-danger-soft)' : isSel ? 'var(--color-primary-soft)' : 'var(--color-bg-elev)',
+                          padding: 10, borderRadius: 6,
+                          cursor: 'pointer', transition: 'all 0.12s', height: '100%',
+                          boxShadow: isSel ? '0 2px 8px rgba(59,130,246,0.15)' : isBatchSel ? '0 2px 8px rgba(220,38,38,0.12)' : 'none',
+                          display: 'flex', flexDirection: 'column', position: 'relative',
+                          minWidth: 0, overflow: 'hidden',
+                        }}
+                      >
+                        <div style={{
+                          position: 'absolute', top: 4, right: 4,
+                          width: 18, height: 18, borderRadius: 4,
+                          border: isBatchSel ? 'none' : '1.5px solid var(--color-border)',
+                          background: isBatchSel ? 'var(--color-danger)' : 'var(--color-bg-elev)',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          color: 'var(--color-text-inverse)', fontSize: 12, fontWeight: 700,
+                          opacity: isBatchSel || inBatchMode ? 1 : 0,
+                          transition: 'opacity 0.15s',
+                          pointerEvents: 'none', flexShrink: 0,
+                        }}>
+                          {isBatchSel ? '✓' : ''}
+                        </div>
+                        <div style={{ fontSize: 12, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 3, color: 'var(--color-text)', paddingRight: 20, minWidth: 0 }}>
+                          {a.name}
+                        </div>
+                        <div style={{ fontSize: 11, display: 'flex', gap: 6, alignItems: 'center', minWidth: 0, overflow: 'hidden' }}>
+                          <span style={{ color: entry?.inDatabase ? 'var(--color-success-text)' : 'var(--color-danger)', fontWeight: 500 }}>
+                            {entry?.inDatabase ? `已使用 ${entry.references.length}` : '未使用'}
+                          </span>
+                          {isXyz && (
+                            <span style={{ fontSize: 9, background: 'var(--color-bg-warning)', color: 'var(--color-warning-text)', padding: '1px 5px', borderRadius: 3, fontWeight: 600 }}>XYZ</span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: 10, color: 'var(--color-text-muted)', marginTop: 2 }}>{(a.size/1024).toFixed(1)} KB</div>
+                      </div>
+                    );
+                  }}
+                />
+              )}
+            </div>
+          </div>
+
+          <aside style={{ width: 350, borderLeft: '1px solid var(--color-border)', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--color-bg-elev)' }}>
+            <div style={{ overflowY: 'auto', borderBottom: '1px solid var(--color-bg-hover)' }}>
+              <AssetPreview asset={selectedAsset} onSaved={refreshSnapshots} />
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              <AssetDetail
+                analysis={selectedAnalysis}
+                onRename={handleRename}
+                renaming={renaming}
+                onDelete={() => {
+                  if (!selectedAssetKey) return;
+                  setSelectedKeys(new Set([selectedAssetKey]));
+                  setTimeout(handleDeleteSelected, 0);
+                }}
+                deleting={deleting}
+              />
+            </div>
+          </aside>
+        </main>
+      </div>
+    </div>
+  );
+}
