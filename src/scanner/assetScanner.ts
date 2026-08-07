@@ -1,20 +1,19 @@
 import { DIR_TO_CATEGORY, CATEGORY_EXTS } from './assetTypes';
 import type { AssetCategory, AssetFile } from '../types/index';
 
-export async function scanProjectAssets(root: FileSystemDirectoryHandle): Promise<AssetFile[]> {
-  const dirHandles = new Map<string, FileSystemDirectoryHandle>();
-  for await (const entry of root.values()) {
-    if (entry.kind === 'directory') {
-      dirHandles.set(entry.name.toLowerCase(), entry as FileSystemDirectoryHandle);
-    }
-  }
+// 模块级 Map：scanner 把预读数据存这里，绕过 React/Zustand 的序列化截断
+// 存 Blob 而不是 ArrayBuffer/Uint8Array——Blob 是浏览器原生二进制封装，
+// V8 不会 detach 它的内存，跨任何函数调用都保持完整数据
+export const prefetchedFileData = new Map<string, Blob>();
 
-  // 先收集所有 (category, fileHandle)，再并行 getFile
+export async function scanProjectAssets(root: FileSystemDirectoryHandle): Promise<AssetFile[]> {
+  prefetchedFileData.clear();
+
   type Collected = { dir: string; category: AssetCategory; fileHandle: FileSystemFileHandle; name: string; ext: string; stem: string };
   const collected: Collected[] = [];
 
   for (const [dirNameLower, category] of Object.entries(DIR_TO_CATEGORY)) {
-    const dirHandle = dirHandles.get(dirNameLower);
+    const dirHandle = await root.getDirectoryHandle(dirNameLower).catch(() => null);
     if (!dirHandle) continue;
     for await (const entry of dirHandle.values()) {
       if (entry.kind !== 'file') continue;
@@ -35,15 +34,17 @@ export async function scanProjectAssets(root: FileSystemDirectoryHandle): Promis
     }
   }
 
-  // 并行获取文件大小
   const assets: AssetFile[] = [];
-  const BATCH = 32;
+  const BATCH = 16;
   for (let i = 0; i < collected.length; i += BATCH) {
     const batch = collected.slice(i, i + BATCH);
-    const infos = await Promise.all(batch.map(c =>
-      c.fileHandle.getFile().then(f => ({ c, size: f.size }))
-    ));
-    for (const { c, size } of infos) {
+    const infos = await Promise.all(batch.map(async c => {
+      const f = await c.fileHandle.getFile();
+      const buf = await f.arrayBuffer();
+      return { c, size: f.size, buf };
+    }));
+    for (const { c, size, buf } of infos) {
+      prefetchedFileData.set(`${c.dir}/${c.name}`, new Blob([buf]));
       assets.push({
         name: c.name,
         stem: c.stem,

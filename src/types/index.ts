@@ -29,6 +29,7 @@ export interface AssetFile {
   size: number;          // 文件字节数
   ext: string;           // 扩展名小写
   handle?: FileSystemFileHandle;
+  prefetchedData?: ArrayBuffer;
 }
 
 export interface AssetReference {

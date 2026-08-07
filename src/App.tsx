@@ -5,12 +5,12 @@ import { scanProjectAssets } from './scanner/assetScanner';
 import { traceAllReferences } from './core/referenceTracker';
 import { renameAsset } from './core/renameEngine';
 import { deleteAssets } from './core/deleteEngine';
-import { listSnapshots, restoreSnapshot } from './core/snapshot';
+import { restoreSnapshot } from './core/snapshot';
 import type { SnapshotInfo } from './core/snapshot';
 import AssetPreview from './components/AssetPreview';
 import AssetDetail from './components/AssetDetail';
 import VirtualGrid from './components/VirtualGrid';
-import type { AssetAnalysis } from './types/index';
+import type { AssetAnalysis, AssetReference } from './types/index';
 
 const CORE_CATEGORIES = [
   'ChipSet','CharSet','FaceSet',
@@ -211,6 +211,139 @@ function WorkspaceSelector({
   );
 }
 
+function TaskPanel({ tasks, onClearCompleted }: {
+  tasks: ReturnType<typeof useStore.getState>['tasks'];
+  onClearCompleted: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const h = (e: MouseEvent) => {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [open]);
+
+  const running = tasks.filter(t => t.status === 'running' || t.status === 'pending');
+  const done = tasks.filter(t => t.status === 'success' || t.status === 'error');
+  const hasError = tasks.some(t => t.status === 'error');
+
+  return (
+    <div ref={panelRef} style={{ position: 'relative', marginRight: 8 }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        title={`${running.length} 个进行中，${done.length} 个已完成`}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          padding: '4px 8px', height: 30,
+          background: hasError ? 'rgba(255,80,80,0.12)' : 'transparent',
+          border: `1px solid ${hasError ? 'rgba(255,80,80,0.5)' : 'var(--color-border)'}`,
+          borderRadius: 6, cursor: 'pointer',
+          color: hasError ? '#ff6b6b' : 'var(--color-text)',
+          fontSize: 12,
+        }}
+      >
+        {running.length > 0 && (
+          <span style={{
+            width: 12, height: 12, border: '2px solid var(--color-border)',
+            borderTopColor: 'var(--color-primary)', borderRadius: '50%',
+            animation: 'spin 0.8s linear infinite',
+          }} />
+        )}
+        {running.length > 0 ? `${running.length} 进行中` : done.length > 0 ? `${done.length} 已完成` : '任务'}
+        <span style={{ fontSize: 10, opacity: 0.6 }}>▾</span>
+      </button>
+
+      {open && (
+        <div style={{
+          position: 'absolute', right: 0, top: 36, zIndex: 1000,
+          minWidth: 280, maxWidth: 380, maxHeight: 320,
+          overflow: 'auto',
+          background: 'var(--color-bg-elev, #2a2a2e)',
+          border: '1px solid var(--color-border)',
+          borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+          padding: 4,
+        }}>
+          {tasks.length === 0 && (
+            <div style={{ padding: 16, textAlign: 'center', color: 'var(--color-text-muted)', fontSize: 12 }}>
+              暂无后台任务
+            </div>
+          )}
+          {tasks.map(t => (
+            <div key={t.id} style={{
+              padding: '8px 10px',
+              display: 'flex', alignItems: 'center', gap: 10,
+              fontSize: 12,
+              borderBottom: '1px solid var(--color-border)',
+            }}>
+              <TaskIcon status={t.status} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ color: t.status === 'error' ? '#ff6b6b' : 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {t.label}
+                </div>
+                {t.message && (
+                  <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {t.message}
+                  </div>
+                )}
+              </div>
+              <span style={{ fontSize: 11, color: 'var(--color-text-muted)', flexShrink: 0 }}>
+                {formatRelativeTime(t.createdAt)}
+              </span>
+            </div>
+          ))}
+          {done.length > 0 && (
+            <button
+              onClick={onClearCompleted}
+              style={{
+                width: '100%', padding: '6px 10px',
+                background: 'transparent', border: 'none',
+                color: 'var(--color-text-muted)', fontSize: 11,
+                cursor: 'pointer', textAlign: 'center',
+              }}
+            >
+              清除已完成
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TaskIcon({ status }: { status: string }) {
+  const base: React.CSSProperties = { width: 14, height: 14, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' };
+  if (status === 'running' || status === 'pending') {
+    return (
+      <span style={{ ...base }}>
+        <span style={{
+          width: 12, height: 12, border: '2px solid var(--color-border)',
+          borderTopColor: 'var(--color-primary)', borderRadius: '50%',
+          animation: 'spin 0.8s linear infinite',
+        }} />
+      </span>
+    );
+  }
+  if (status === 'success') {
+    return <span style={{ ...base, color: '#4ade80' }}>✓</span>;
+  }
+  if (status === 'error') {
+    return <span style={{ ...base, color: '#ff6b6b' }}>✗</span>;
+  }
+  return <span style={base}>•</span>;
+}
+
+function formatRelativeTime(ts: number): string {
+  const diff = Date.now() - ts;
+  if (diff < 1000) return '刚刚';
+  if (diff < 60000) return `${Math.floor(diff / 1000)}秒前`;
+  if (diff < 3600000) return `${Math.floor(diff / 60000)}分钟前`;
+  return new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+}
+
 export default function App() {
   const {
     gameData, setGameData,
@@ -221,6 +354,8 @@ export default function App() {
     selectedAssetKey, setSelectedAssetKey,
     loading, setLoading,
     setError,
+    tasks, clearCompletedTasks,
+    snapshots, refreshSnapshots,
   } = useStore();
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -478,9 +613,9 @@ export default function App() {
   }
 
   // ===== 快照/撤销 =====
-  const [snapshots, setSnapshots] = useState<SnapshotInfo[]>([]);
   const [snapMenuOpen, setSnapMenuOpen] = useState(false);
   const snapMenuRef = useRef<HTMLDivElement>(null);
+  const pendingBlobBuffer = useRef<Map<string, ArrayBuffer>>(new Map());
 
   useEffect(() => {
     const h = (e: MouseEvent) => {
@@ -490,28 +625,26 @@ export default function App() {
     return () => document.removeEventListener('mousedown', h);
   }, []);
 
-  async function refreshSnapshots() {
-    if (!gameData?.rootHandle) return;
-    const list = await listSnapshots(gameData.rootHandle);
-    setSnapshots(list);
-  }
-
   // 每次重命名后刷新快照列表
   useEffect(() => {
-    if (gameData?.rootHandle) refreshSnapshots();
+    if (gameData?.rootHandle) refreshSnapshots(gameData.rootHandle);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameData?.rootHandle, analyses]);
 
   async function handleRestoreSnapshot(snap: SnapshotInfo) {
     if (!gameData?.rootHandle) return;
-    const ok = confirm(`恢复此快照？\n\n${snap.label || snap.dirName}\n\n涉及 ${snap.files.length} 个文件，恢复后当前磁盘上的修改将被覆盖。`);
+    const ok = confirm(`恢复此快照？\n\n${snap.label || snap.dirName}\n\n涉及 ${snap.files.length + (snap.deletedFiles?.length ?? 0)} 个文件，恢复后当前磁盘上的修改将被覆盖。`);
     if (!ok) return;
 
     setLoading(true);
     try {
-      // 1. 恢复磁盘文件
-      const success = await restoreSnapshot(gameData.rootHandle, snap);
+      // 1. 恢复磁盘文件（blobBuffer 作为后台快照未完成时的 fallback）
+      const success = await restoreSnapshot(gameData.rootHandle, snap, pendingBlobBuffer.current);
       if (!success) throw new Error('快照目录损坏或已删除');
+
+      // 清理已经恢复成功的 blob 缓存
+      for (const rel of snap.files) pendingBlobBuffer.current.delete(rel);
+      for (const rel of snap.deletedFiles ?? []) pendingBlobBuffer.current.delete(rel);
 
       // 2. 从磁盘重新 decode（全部 await 完）
       const newData = await reDecodeWithEncoding(gameData, gameData.encoding);
@@ -539,7 +672,7 @@ export default function App() {
       setSelectedAssetKey(null);
 
       console.log(`[SNAPSHOT RESTORE] ← ${snap.dirName}, refs=${refs.length}`);
-      await refreshSnapshots();
+      await refreshSnapshots(gameData.rootHandle);
     } catch (e) {
       console.error('[SNAPSHOT RESTORE FAILED]', e);
       alert('恢复出错：' + (e as Error).message);
@@ -584,29 +717,54 @@ export default function App() {
         return;
       }
 
-      // 从磁盘重扫（有文件被删了）
-      const found = await scanProjectAssets(gameData.rootHandle!);
-
-      // 重跑引用追踪
-      const refs = traceAllReferences(gameData);
-      const key = (cat: string, stem: string) => `${cat}/${stem.toLowerCase()}`;
-      const map = new Map<string, AssetAnalysis>();
-      for (const a of found) {
-        map.set(key(a.category, a.stem), { asset: a, references: [], inDatabase: false, onDisk: true });
-      }
-      for (const ref of refs) {
-        const k = key(ref.category, ref.assetName);
-        const entry = map.get(k);
-        if (entry) { entry.references.push(ref); entry.inDatabase = true; }
+      if (result.deletedBlobs) {
+        for (const [k, v] of result.deletedBlobs) pendingBlobBuffer.current.set(k, v);
       }
 
-      setAssets(found);
-      setAnalyses(map);
+      console.time('[DELETE] aftermath');
+
+      const deletedSet = new Set(result.filesDeleted);
+      const newAssets = assets.filter(a => !deletedSet.has(a.path));
+      setAssets(newAssets);
+
+      const deletedKeys = new Set(
+        toDelete.map(a => `${a.category}/${a.stem.toLowerCase()}`)
+      );
+
+      const keyOf = (cat: string, stem: string) => `${cat}/${stem.toLowerCase()}`;
+      const newAnalyses = new Map<string, AssetAnalysis>();
+
+      if (result.filesWritten.length > 0) {
+        const refs = traceAllReferences(gameData);
+        const refMap = new Map<string, AssetReference[]>();
+        for (const ref of refs) {
+          const k = keyOf(ref.category, ref.assetName);
+          let arr = refMap.get(k);
+          if (!arr) { arr = []; refMap.set(k, arr); }
+          arr.push(ref);
+        }
+        for (const a of newAssets) {
+          const k = keyOf(a.category, a.stem);
+          const refsForAsset = refMap.get(k) ?? [];
+          newAnalyses.set(k, { asset: a, references: refsForAsset, inDatabase: refsForAsset.length > 0, onDisk: true });
+        }
+      } else {
+        for (const [k, entry] of analyses) {
+          if (deletedKeys.has(k)) continue;
+          const freshAsset = newAssets.find(a =>
+            a.category === entry.asset.category && a.stem.toLowerCase() === entry.asset.stem.toLowerCase()
+          );
+          newAnalyses.set(k, { ...entry, asset: freshAsset ?? entry.asset });
+        }
+      }
+      setAnalyses(newAnalyses);
+
       setSelectedKeys(new Set());
       setSelectedAssetKey(null);
 
       console.log(`[DELETE] ${result.message}`);
-      await refreshSnapshots();
+      await refreshSnapshots(gameData.rootHandle);
+      console.timeEnd('[DELETE] aftermath');
 
       if (!result.success) {
         // 部分失败
@@ -647,7 +805,7 @@ export default function App() {
         {gameData && (
           <div ref={snapMenuRef} style={{ position: 'relative' }}>
             <button
-              onClick={async () => { setSnapMenuOpen(!snapMenuOpen); await refreshSnapshots(); }}
+              onClick={async () => { setSnapMenuOpen(!snapMenuOpen); await refreshSnapshots(gameData.rootHandle); }}
               style={{
                 padding: '5px 10px', fontSize: 12,
                 background: 'var(--color-bg-elev)', border: '1px solid var(--color-border)',
@@ -694,7 +852,7 @@ export default function App() {
                         {s.label || s.dirName}
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 2 }}>
-                        {formatTime(s.timestamp)} · {s.files.length} 个文件
+                        {formatTime(s.timestamp)} · {s.files.length + (s.deletedFiles?.length ?? 0)} 个文件
                       </div>
                     </button>
                   ))
@@ -705,7 +863,7 @@ export default function App() {
         )}
         <div style={{ flex: 1 }} />
         {loading && (
-          <span style={{ fontSize: 12, color: 'var(--color-text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontSize: 12, color: 'var(--color-text-muted)', display: 'flex', alignItems: 'center', gap: 6, marginRight: 8 }}>
             <span style={{
               width: 12, height: 12, border: '2px solid var(--color-border)',
               borderTopColor: 'var(--color-primary)', borderRadius: '50%',
@@ -713,6 +871,9 @@ export default function App() {
             }} />
             加载中...
           </span>
+        )}
+        {tasks.length > 0 && (
+          <TaskPanel tasks={tasks} onClearCompleted={clearCompletedTasks} />
         )}
         {gameData && (
           <button
@@ -932,7 +1093,7 @@ export default function App() {
 
           <aside style={{ width: 350, borderLeft: '1px solid var(--color-border)', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--color-bg-elev)' }}>
             <div style={{ overflowY: 'auto', borderBottom: '1px solid var(--color-bg-hover)' }}>
-              <AssetPreview asset={selectedAsset} onSaved={refreshSnapshots} />
+              <AssetPreview asset={selectedAsset} onSaved={() => gameData?.rootHandle && refreshSnapshots(gameData.rootHandle)} />
             </div>
             <div style={{ flex: 1, overflowY: 'auto' }}>
               <AssetDetail
