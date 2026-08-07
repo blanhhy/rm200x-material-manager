@@ -50,6 +50,11 @@ coverage/
 # 本地参考资料（体积大，非项目源码）
 .tech_support/
 
+# 调试 / 诊断脚本
+scripts/
+diag*.mjs
+_search_block.cjs
+
 # 快照 / 运行时数据
 snapshots/
 *.snapshot
