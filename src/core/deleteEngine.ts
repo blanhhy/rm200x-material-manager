@@ -15,7 +15,7 @@ export interface DeleteResult {
   message: string;
   filesWritten: string[];
   filesDeleted: string[];
-  deletedBlobs?: Map<string, ArrayBuffer>;
+  deletedBlobs?: Map<string, Blob>;
 }
 
 function refCatForEventCode(code: number): AssetCategory | null {
@@ -481,16 +481,16 @@ export async function deleteAssets(
     assets.map(async (a) => {
       const pre = prefetchedFileData.get(a.path);
       if (pre instanceof Blob && pre.size > 0) {
-        return { path: a.path, buf: await pre.arrayBuffer() };
+        return { path: a.path, blob: pre };
       }
       const fh = (a as any).handle as FileSystemFileHandle;
       const f = await fh.getFile();
-      return { path: a.path, buf: await f.arrayBuffer() };
+      return { path: a.path, blob: f };
     })
   );
-  const deletedBlobs = new Map<string, ArrayBuffer>();
+  const deletedBlobs = new Map<string, Blob>();
   for (const r of blobResults) {
-    if (r.status === 'fulfilled') deletedBlobs.set(r.value.path, r.value.buf);
+    if (r.status === 'fulfilled') deletedBlobs.set(r.value.path, r.value.blob);
     else console.warn('[DELETE] read blob failed:', (r as PromiseRejectedResult).reason);
   }
   console.timeEnd('[DELETE] read-blobs');

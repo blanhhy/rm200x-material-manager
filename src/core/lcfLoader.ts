@@ -175,10 +175,8 @@ function splitDbRefs(db: Database): { fileRefs: string[]; displayTexts: string[]
 
   const sys = db.system as unknown as Record<string, string> | undefined;
   if (sys) {
-    // system 的这几个字段既是文件名引用，也是有意义的文本（含假名/汉字），两边都收
     for (const k of ['titleName', 'gameoverName', 'systemName', 'system2Name']) {
       pushFile(sys[k]);
-      pushText(sys[k]);
     }
     pushFile(sys.frameName);
     pushFile((sys as any).battletestBackground);
@@ -192,17 +190,50 @@ function splitDbRefs(db: Database): { fileRefs: string[]; displayTexts: string[]
   return { fileRefs, displayTexts };
 }
 
+/**
+ * 把 .lmu / .lmt / .ini 等文件原始字节用指定编码解码，
+ * 抽取所有"看起来像游戏文本"的片段（含中日韩文字的字符串）。
+ */
+function extractTextsFromRaw(
+  bufs: Uint8Array[],
+  enc: EncodingName,
+  minLen = 3,
+): string[] {
+  const result: string[] = [];
+  const ic = ICONV_TO_ENCODING[enc];
+  for (const buf of bufs) {
+    if (!buf || buf.length === 0) continue;
+    const text = iconv.decode(buf, ic);
+    const re = /[\u3000-\u303F\u3040-\u30FF\u4E00-\u9FFF\uFF00-\uFFEF\u0020-\u007E\\n\\r\\t]{3,}/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) {
+      const s = m[0].trim();
+      if (s.length >= minLen && /[\u3040-\u30FF\u4E00-\u9FFF]/.test(s)) {
+        result.push(s);
+      }
+    }
+  }
+  return result;
+}
+
 function scoreEncoding(
   ldbBuf: Uint8Array,
   engine: EngineVersion,
   enc: EncodingName,
+  extraBufs: Uint8Array[] = [],
 ): { total: number; reasons: string[] } {
   let db: Database;
   try {
     db = decodeDatabase(ldbBuf, { engine, transcoder: makeTranscoder(enc) });
   } catch { return { total: -1, reasons: ['decode failed'] }; }
 
-  const { displayTexts } = splitDbRefs(db);
+  let { displayTexts } = splitDbRefs(db);
+  if (extraBufs.length > 0) {
+    const extraTexts = extractTextsFromRaw(extraBufs, enc);
+    if (extraTexts.length > 0) {
+      displayTexts = [...displayTexts, ...extraTexts];
+    }
+  }
   const reasons: string[] = [];
   let total = 0;
 
@@ -213,42 +244,66 @@ function scoreEncoding(
     if (s.charTotal === 0) {
       reasons.push('empty');
     } else {
-      const badRatio = s.other / s.charTotal;
-      total += Math.max(0, 50 - badRatio * 200);
+      const n = s.charTotal;
+      const hanziRatio = s.totalHanzi / n;
+      const kanaRatio = (s.fullKana + s.halfKana) / n;
+      const otherRatio = s.other / n;
+      const commonRatio = s.totalHanzi > 0 ? s.commonHanzi / s.totalHanzi : 0;
 
-      if (s.hasKanji && s.totalHanzi > 0) {
-        const commonRatio = s.commonHanzi / s.totalHanzi;
-        if (commonRatio >= 0.3) {
-          total += 25;
-          reasons.push(`+25 commonHanzi:${commonRatio.toFixed(2)}`);
-        } else {
+      total -= otherRatio * 100;
+      if (otherRatio > 0.1) reasons.push(`-badOther:${otherRatio.toFixed(2)}`);
+
+      // === 中文模式 ===
+      // 必须：汉字多 + 常用汉字比例高
+      if (hanziRatio > 0.35 && commonRatio >= 0.3 && kanaRatio < 0.2) {
+        total += 50;
+        reasons.push(`+zhPattern hanzi:${hanziRatio.toFixed(2)} common:${commonRatio.toFixed(2)}`);
+        if (s.maxHanziRun >= 5) {
+          total += 15;
+          reasons.push(`+zhLongRun:${s.maxHanziRun}`);
+        }
+        if (s.hasPunct) { total += 10; reasons.push('+zhPunct'); }
+      }
+      // 假中文：汉字多但常用汉字极少 —— 典型 GBK 错解 Shift_JIS
+      else if (hanziRatio > 0.35 && commonRatio < 0.2 && kanaRatio < 0.05) {
+        total -= 20;
+        reasons.push(`-fakeZh hanziManyButRareCommon:${commonRatio.toFixed(2)}`);
+      }
+
+      // === 日文模式 ===
+      // 必须：假名占显著比例，且假名 > 汉字*0.8
+      if (kanaRatio > 0.2 && kanaRatio > hanziRatio * 0.8) {
+        total += 50;
+        reasons.push(`+jaPattern kana:${kanaRatio.toFixed(2)} hanzi:${hanziRatio.toFixed(2)}`);
+        if (hanziRatio > 0.05 && hanziRatio < 0.5) {
+          total += 15;
+          reasons.push('+jaMixedKanji');
+        }
+        if (s.hasPunct) { total += 10; reasons.push('+jaPunct'); }
+        // 真正日文：全角假名多；GBK错解会产生大量半角假名乱码
+        const halfRatio = s.fullKana + s.halfKana > 0 ? s.halfKana / (s.fullKana + s.halfKana) : 0;
+        if (halfRatio > 0.6) {
           total -= 25;
-          reasons.push(`-25 rareHanzi:${commonRatio.toFixed(2)}`);
-        }
-        if (s.maxHanziRun >= 3) {
-          total += 10;
-          reasons.push(`+10 hanziRun:${s.maxHanziRun}`);
+          reasons.push(`-fakeJaHalfKana halfKanaRatio:${halfRatio.toFixed(2)}`);
+        } else if (s.fullKana > 0 && s.halfKana > 0 && halfRatio < 0.3) {
+          total += 5;
+          reasons.push('+jaFullKanaDominant');
         }
       }
 
-      if (s.fullKana >= 3) {
-        total += 20;
-        reasons.push(`+20 fullKana:${s.fullKana}`);
-      }
-      if (s.hasKana && !s.hasKanji) {
-        total += 15;
-        reasons.push('+15 kanaOnly');
-      }
-      if (s.hasPunct) {
-        total += 5;
-        reasons.push('+5 punct');
+      // === 乱码特征 ===
+      // 汉字和假名"都不少"——两种语言特征重叠
+      if (hanziRatio > 0.2 && kanaRatio > 0.2) {
+        total -= 30;
+        reasons.push(`-mixedGarbage hanzi+kana both high`);
       }
     }
   } else {
     reasons.push('no displayTexts');
   }
 
-  console.log(`[ENCODE SCORE] ${enc}: ${total.toFixed(1)}  ${reasons.join(' | ')}  sysTitle="${(db.system as any).titleName}" sysName="${(db.system as any).systemName}"`);
+  const sample = displayTexts.slice(0, 3).map(t => `"${t.slice(0, 20)}"`).join(' ');
+  console.log(`[ENCODE SCORE] ${enc}: ${total.toFixed(1)}  ${reasons.join(' | ')}  sample=[${sample}]`);
   return { total, reasons };
 }
 
@@ -256,6 +311,7 @@ export function detectEncoding(
   iniBuf: Uint8Array | null,
   ldbBuf: Uint8Array | null,
   engine: EngineVersion = '2k',
+  extraBufs: Uint8Array[] = [],
 ): EncodingName {
   if (!ldbBuf && !iniBuf) return 'latin1';
 
@@ -279,7 +335,7 @@ export function detectEncoding(
   let bestEnc: EncodingName = 'latin1';
   let bestScore = -Infinity;
   for (const enc of CANDIDATE_ENCODINGS) {
-    const r = scoreEncoding(ldbBuf, engine, enc);
+    const r = scoreEncoding(ldbBuf, engine, enc, extraBufs);
     if (r.total > bestScore) { bestScore = r.total; bestEnc = enc; }
   }
 
@@ -376,7 +432,22 @@ export async function loadGameProject(root: FileSystemDirectoryHandle): Promise<
   }
   result.engine = engine;
 
-  const encoding = detectEncoding(iniBuf, ldbBuf, engine);
+  // 读所有 .lmu 文件用于编码推断（DB 名字段太少，地图对话才是大头）
+  const lmuBufs: Uint8Array[] = [];
+  try {
+    for await (const [entryName, entry] of root.entries()) {
+      if (entry.kind === 'file' && /^Map\d{4}\.lmu$/i.test(entryName)) {
+        lmuBufs.push(await readAll(entry as FileSystemFileHandle));
+      }
+    }
+    if (lmuBufs.length > 0) {
+      console.log(`[ENCODE EXTRA] loaded ${lmuBufs.length} .lmu files for scoring`);
+    }
+  } catch (e) {
+    console.warn('[ENCODE EXTRA] failed to scan .lmu:', (e as Error).message);
+  }
+
+  const encoding = detectEncoding(iniBuf, ldbBuf, engine, lmuBufs);
   result.encoding = encoding;
   const transcoder = makeTranscoder(encoding);
 

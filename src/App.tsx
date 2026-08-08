@@ -615,7 +615,8 @@ export default function App() {
   // ===== 快照/撤销 =====
   const [snapMenuOpen, setSnapMenuOpen] = useState(false);
   const snapMenuRef = useRef<HTMLDivElement>(null);
-  const pendingBlobBuffer = useRef<Map<string, ArrayBuffer>>(new Map());
+  const [loadingHint, setLoadingHint] = useState<string | null>(null);
+  const pendingBlobBuffer = useRef<Map<string, Blob>>(new Map());
 
   useEffect(() => {
     const h = (e: MouseEvent) => {
@@ -631,53 +632,66 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameData?.rootHandle, analyses]);
 
+  const DB_EXTS = ['.ldb', '.lmt', '.lmu'];
+
   async function handleRestoreSnapshot(snap: SnapshotInfo) {
     if (!gameData?.rootHandle) return;
     const ok = confirm(`恢复此快照？\n\n${snap.label || snap.dirName}\n\n涉及 ${snap.files.length + (snap.deletedFiles?.length ?? 0)} 个文件，恢复后当前磁盘上的修改将被覆盖。`);
     if (!ok) return;
 
+    const hasDbChange = snap.files.some(f => DB_EXTS.some(ext => f.endsWith(ext)));
     setLoading(true);
+    setLoadingHint(hasDbChange ? '正在恢复快照并重解码项目数据...' : '正在恢复快照并刷新素材索引...');
     try {
-      // 1. 恢复磁盘文件（blobBuffer 作为后台快照未完成时的 fallback）
       const success = await restoreSnapshot(gameData.rootHandle, snap, pendingBlobBuffer.current);
       if (!success) throw new Error('快照目录损坏或已删除');
 
-      // 清理已经恢复成功的 blob 缓存
       for (const rel of snap.files) pendingBlobBuffer.current.delete(rel);
       for (const rel of snap.deletedFiles ?? []) pendingBlobBuffer.current.delete(rel);
 
-      // 2. 从磁盘重新 decode（全部 await 完）
-      const newData = await reDecodeWithEncoding(gameData, gameData.encoding);
+      const newData = hasDbChange
+        ? await reDecodeWithEncoding(gameData, gameData.encoding)
+        : gameData;
 
-      // 3. 重扫磁盘 assets
       const found = await scanProjectAssets(gameData.rootHandle);
-
-      // 4. 重跑引用追踪（用新 decode 的 data）
-      const refs = traceAllReferences(newData);
       const key = (cat: string, stem: string) => `${cat}/${stem.toLowerCase()}`;
       const map = new Map<string, AssetAnalysis>();
-      for (const a of found) {
-        map.set(key(a.category, a.stem), { asset: a, references: [], inDatabase: false, onDisk: true });
-      }
-      for (const ref of refs) {
-        const k = key(ref.category, ref.assetName);
-        const entry = map.get(k);
-        if (entry) { entry.references.push(ref); entry.inDatabase = true; }
+
+      if (hasDbChange) {
+        const refs = traceAllReferences(newData);
+        for (const a of found) {
+          map.set(key(a.category, a.stem), { asset: a, references: [], inDatabase: false, onDisk: true });
+        }
+        for (const ref of refs) {
+          const k = key(ref.category, ref.assetName);
+          const entry = map.get(k);
+          if (entry) { entry.references.push(ref); entry.inDatabase = true; }
+        }
+      } else {
+        for (const a of found) {
+          const old = analyses.get(key(a.category, a.stem));
+          map.set(key(a.category, a.stem), {
+            asset: a,
+            references: old?.references ?? [],
+            inDatabase: old?.inDatabase ?? false,
+            onDisk: true,
+          });
+        }
       }
 
-      // 5. 全部准备好再一次性更新 store（绝不出现半更新状态）
       setGameData(newData);
       setAssets(found);
       setAnalyses(map);
       setSelectedAssetKey(null);
 
-      console.log(`[SNAPSHOT RESTORE] ← ${snap.dirName}, refs=${refs.length}`);
+      console.log(`[SNAPSHOT RESTORE] ← ${snap.dirName}, assets=${found.length}${hasDbChange ? ', reDecoded + traced' : ', reuse refs, skip reDecode + trace'}`);
       await refreshSnapshots(gameData.rootHandle);
     } catch (e) {
       console.error('[SNAPSHOT RESTORE FAILED]', e);
       alert('恢复出错：' + (e as Error).message);
     } finally {
       setLoading(false);
+      setLoadingHint(null);
       setSnapMenuOpen(false);
     }
   }
@@ -1003,10 +1017,10 @@ export default function App() {
                     margin: '0 auto 18px',
                   }} />
                   <p style={{ fontSize: 15, margin: 0, fontWeight: 500, color: 'var(--color-text)' }}>
-                    {gameData ? '正在扫描素材目录...' : '正在加载项目...'}
+                    {loadingHint ?? (gameData ? '正在扫描素材目录...' : '正在加载项目...')}
                   </p>
                   <p style={{ fontSize: 12, margin: '6px 0 0', color: 'var(--color-text-muted)' }}>
-                    {gameData ? '解析数据库引用 · 建立引用索引' : '读取 RPG_RT.ldb · 检测编码 · 解码地图'}
+                    {loadingHint ? '' : (gameData ? '解析数据库引用 · 建立引用索引' : '读取 RPG_RT.ldb · 检测编码 · 解码地图')}
                   </p>
                 </div>
               ) : !gameData ? (

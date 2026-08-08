@@ -71,25 +71,10 @@ async function copyOne(
   }
 }
 
-async function copyFileFromBackup(
-  backupRoot: FileSystemDirectoryHandle,
-  dstRoot: FileSystemDirectoryHandle,
-  relPath: string,
-) {
-  const parts = relPath.split('/');
-  const fileName = parts.pop()!;
-  let srcDir = backupRoot;
-  let dstDir = dstRoot;
-  for (const seg of parts) {
-    srcDir = await srcDir.getDirectoryHandle(seg);
-    dstDir = await ensureDir(dstDir, seg);
-  }
-  const srcHandle = await srcDir.getFileHandle(fileName);
-  const file = await srcHandle.getFile();
-  const dstHandle = await dstDir.getFileHandle(fileName, { create: true });
-  const w = await dstHandle.createWritable();
-  await w.write(file);
-  await w.close();
+interface BlobBatchResult {
+  ok: string[];
+  offsets: Record<string, { offset: number; length: number }>;
+  totalBytes: number;
 }
 
 export async function createSnapshot(
@@ -97,7 +82,7 @@ export async function createSnapshot(
   files: string[],
   renameInfo?: { fromRel: string; toRel: string; label?: string },
   filesToDelete?: string[],
-  blobBuffer?: Map<string, ArrayBuffer>,
+  blobBuffer?: Map<string, Blob>,
 ): Promise<SnapshotInfo | null> {
   try {
     const backupRoot = await ensureDir(root, BACKUP_DIR);
@@ -124,10 +109,13 @@ export async function createSnapshot(
     }
 
     const deletedFiles: string[] = [];
+    let blobOffsets: Record<string, { offset: number; length: number }> | null = null;
     if (filesToDelete && filesToDelete.length > 0) {
       if (blobBuffer && blobBuffer.size > 0) {
         console.time('[SNAPSHOT] blob-write deleted');
-        deletedFiles.push(...await batchWriteBlobs(dstDirs!, filesToDelete, blobBuffer));
+        const blobResult = await batchWriteBlobs(dstDirs!, filesToDelete, blobBuffer);
+        deletedFiles.push(...blobResult.ok);
+        blobOffsets = blobResult.offsets;
         console.timeEnd('[SNAPSHOT] blob-write deleted');
       } else {
         console.time('[SNAPSHOT] batch-copy deleted');
@@ -145,6 +133,7 @@ export async function createSnapshot(
       filesBefore,
       rename: renameInfo ? { from: renameInfo.fromRel, to: renameInfo.toRel } : null,
       deletedFiles,
+      blobOffsets,
       createdAt: Date.now(),
       label,
     };
@@ -209,44 +198,37 @@ async function batchCopy(
 async function batchWriteBlobs(
   dstDirs: Map<string, FileSystemDirectoryHandle>,
   relPaths: string[],
-  blobBuffer: Map<string, ArrayBuffer>,
-): Promise<string[]> {
-  // Chrome File System Access API 对同一个目录并行 createWritable 有竞态 bug
-  // 所以按目录分组，目录内串行，跨目录并行
-  const byDir = new Map<string, string[]>();
+  blobBuffer: Map<string, Blob>,
+): Promise<BlobBatchResult> {
+  const offsets: Record<string, { offset: number; length: number }> = {};
+  const chunks: BlobPart[] = [];
+  let offset = 0;
+  const ok: string[] = [];
+
   for (const rel of relPaths) {
-    const parts = rel.split('/');
-    parts.pop();
-    const dirKey = parts.join('/');
-    if (!byDir.has(dirKey)) byDir.set(dirKey, []);
-    byDir.get(dirKey)!.push(rel);
+    const blob = blobBuffer.get(rel);
+    if (!blob) { console.warn('[SNAPSHOT] blob not found:', rel); continue; }
+    offsets[rel] = { offset, length: blob.size };
+    chunks.push(blob);
+    offset += blob.size;
+    ok.push(rel);
   }
 
-  const tasks = [...byDir.entries()].map(async ([dirKey, paths]) => {
-    const dstDir = dstDirs.get(dirKey)!;
-    const ok: string[] = [];
-    for (const rel of paths) {
-      const buf = blobBuffer.get(rel);
-      if (!buf) { console.warn('[SNAPSHOT] buffer not found:', rel); continue; }
-      const fileName = rel.split('/').pop()!;
-      try {
-        const fh = await dstDir.getFileHandle(fileName, { create: true });
-        const w = await fh.createWritable();
-        await w.write(buf.slice(0));
-        await w.close();
-        ok.push(rel);
-      } catch (e) {
-        console.warn('[SNAPSHOT] blob write failed:', rel, (e as Error).message);
-      }
-    }
-    return ok;
-  });
+  const combined = new Blob(chunks);
+  const totalBytes = combined.size;
 
-  const totalBytes = relPaths.reduce((s, p) => s + (blobBuffer.get(p)?.byteLength ?? 0), 0);
-  const results = await Promise.all(tasks);
-  const ok = results.flat();
-  console.log(`[SNAPSHOT] batchWriteBlobs: ${ok.length}/${relPaths.length} ok, dirs=${byDir.size}, totalBytes=${totalBytes}`);
-  return ok;
+  const rootDir = dstDirs.get('')!;
+  try {
+    const fh = await rootDir.getFileHandle('deleted.blobs', { create: true });
+    const w = await fh.createWritable();
+    await w.write(combined);
+    await w.close();
+  } catch (e) {
+    console.warn('[SNAPSHOT] combined blob write failed:', (e as Error).message);
+  }
+
+  console.log(`[SNAPSHOT] batchWriteBlobs: ${ok.length}/${relPaths.length} ok, totalBytes=${totalBytes}`);
+  return { ok, offsets, totalBytes };
 }
 
 async function pruneOldSnapshots(backupRoot: FileSystemDirectoryHandle) {
@@ -287,21 +269,36 @@ export async function listSnapshots(root: FileSystemDirectoryHandle): Promise<Sn
 export async function restoreSnapshot(
   root: FileSystemDirectoryHandle,
   snap: SnapshotInfo,
-  blobBuffer?: Map<string, ArrayBuffer>,
+  blobBuffer?: Map<string, Blob>,
 ): Promise<boolean> {
+  const t0 = performance.now();
   const backupRoot = await root.getDirectoryHandle(BACKUP_DIR).catch(() => null);
   if (!backupRoot) return false;
   const snapDir = await backupRoot.getDirectoryHandle(snap.dirName).catch(() => null);
   if (!snapDir) return false;
 
-  let meta: { filesBefore: string[]; rename: { from: string; to: string } | null; deletedFiles: string[] };
+  let meta: {
+    filesBefore: string[];
+    rename: { from: string; to: string } | null;
+    deletedFiles: string[];
+    blobOffsets?: Record<string, { offset: number; length: number }> | null;
+  };
   try {
     const metaHandle = await snapDir.getFileHandle('meta.json');
     meta = JSON.parse(await (await metaHandle.getFile()).text());
   } catch {
     return false;
   }
+  console.log(`[RESTORE] meta-load: ${(performance.now() - t0).toFixed(0)}ms, filesBefore=${meta.filesBefore.length}, deletedFiles=${meta.deletedFiles?.length ?? 0}`);
 
+  const allFiles = [
+    ...meta.filesBefore.filter(f => f !== meta.rename?.from),
+    ...(meta.deletedFiles ?? []),
+  ];
+  const { dst: dstDirs } = await prefetchDirs(snapDir, root, allFiles);
+  console.log(`[RESTORE] prefetch-dirs: ${(performance.now() - t0).toFixed(0)}ms`);
+
+  const t1 = performance.now();
   if (meta.rename) {
     const { from: fromRel, to: toRel } = meta.rename;
     const toParts = toRel.split('/');
@@ -335,41 +332,127 @@ export async function restoreSnapshot(
       console.warn('[SNAPSHOT] rename 还原失败', e);
     }
   }
+  console.log(`[RESTORE] rename: ${(performance.now() - t1).toFixed(0)}ms`);
 
-  for (const rel of meta.filesBefore) {
-    if (rel === meta.rename?.from) continue;
-    try {
-      await copyFileFromBackup(snapDir, root, rel);
-    } catch (e) {
-      console.warn('[SNAPSHOT] 还原文件失败', rel, e);
-    }
-  }
-
-  for (const rel of meta.deletedFiles ?? []) {
-    try {
-      await copyFileFromBackup(snapDir, root, rel);
-    } catch (e) {
-      const blob = blobBuffer?.get(rel);
-      if (blob) {
-        try {
-          const parts = rel.split('/');
-          const fileName = parts.pop()!;
-          let dstDir = root;
-          for (const seg of parts) dstDir = await ensureDir(dstDir, seg);
-          const fh = await dstDir.getFileHandle(fileName, { create: true });
-          const w = await fh.createWritable();
-          await w.write(blob.slice(0));
-          await w.close();
-        } catch (e2) {
-          console.warn('[SNAPSHOT] 还原被删文件失败（blob 也不行）', rel, e2);
-        }
-      } else {
-        console.warn('[SNAPSHOT] 还原被删文件失败，且无内存备份', rel, e);
+  const t2 = performance.now();
+  let fbOk = 0;
+  const fbFailed: string[] = [];
+  const fbTasks = [...groupByDir(meta.filesBefore.filter(f => f !== meta.rename?.from)).entries()].map(async ([dirKey, paths]) => {
+    const dstDir = dstDirs.get(dirKey)!;
+    const snapSub = await (async () => {
+      if (!dirKey) return snapDir;
+      let cur = snapDir;
+      for (const seg of dirKey.split('/')) cur = await cur.getDirectoryHandle(seg);
+      return cur;
+    })();
+    for (const rel of paths) {
+      const fileName = rel.split('/').pop()!;
+      try {
+        const srcHandle = await snapSub.getFileHandle(fileName);
+        const file = await srcHandle.getFile();
+        const fh = await dstDir.getFileHandle(fileName, { create: true });
+        const w = await fh.createWritable();
+        await w.write(file);
+        await w.close();
+        fbOk++;
+      } catch (e) {
+        fbFailed.push(rel);
+        console.warn('[SNAPSHOT] 还原 filesBefore 失败', rel, (e as Error).message);
       }
     }
+  });
+  await Promise.all(fbTasks);
+  console.log(`[RESTORE] filesBefore-write(${meta.filesBefore.length}): ok=${fbOk}, failed=${fbFailed.length}, ${(performance.now() - t2).toFixed(0)}ms`);
+
+  const t3 = performance.now();
+  const combinedBlob: Blob | null = meta.blobOffsets
+    ? await snapDir.getFileHandle('deleted.blobs').then(h => h.getFile()).catch(() => null)
+    : null;
+  if (combinedBlob) {
+    const keys = Object.keys(meta.blobOffsets ?? {});
+    const sample = keys.slice(0, 3).map(k => `${k}: ${meta.blobOffsets![k].offset}-${meta.blobOffsets![k].length}`).join(', ');
+    console.log(`[RESTORE] combinedBlob size=${combinedBlob.size}, offsets.count=${keys.length}, sample=[${sample}]`);
+  } else {
+    console.warn('[RESTORE] combinedBlob is null — blobOffsets mode unavailable');
   }
 
+  let okCount = 0;
+  const failed: string[] = [];
+
+  const delTasks = [...groupByDir(meta.deletedFiles ?? []).entries()].map(async ([dirKey, paths]) => {
+    const dstDir = dstDirs.get(dirKey)!;
+    for (const rel of paths) {
+      try {
+        if (combinedBlob && meta.blobOffsets) {
+          const entry = meta.blobOffsets[rel];
+          if (!entry) throw new Error('offset not found in blobOffsets');
+          const slice = combinedBlob.slice(entry.offset, entry.offset + entry.length);
+          const fileName = rel.split('/').pop()!;
+          const fh = await dstDir.getFileHandle(fileName, { create: true });
+          const w = await fh.createWritable();
+          await w.write(slice);
+          await w.close();
+          okCount++;
+        } else {
+          const fileName = rel.split('/').pop()!;
+          let snapSub = snapDir;
+          if (dirKey) {
+            for (const seg of dirKey.split('/')) snapSub = await snapSub.getDirectoryHandle(seg);
+          }
+          const srcHandle = await snapSub.getFileHandle(fileName);
+          const file = await srcHandle.getFile();
+          const fh = await dstDir.getFileHandle(fileName, { create: true });
+          const w = await fh.createWritable();
+          await w.write(file);
+          await w.close();
+          okCount++;
+        }
+      } catch (e) {
+        const blob = blobBuffer?.get(rel);
+        if (blob) {
+          try {
+            const fileName = rel.split('/').pop()!;
+            const fh = await dstDir.getFileHandle(fileName, { create: true });
+            const w = await fh.createWritable();
+            await w.write(blob);
+            await w.close();
+            okCount++;
+          } catch (e2) {
+            failed.push(rel);
+            console.warn('[SNAPSHOT] 还原被删文件失败（blob fallback 也不行）', rel, (e2 as Error).message);
+          }
+        } else {
+          failed.push(rel);
+          console.warn('[SNAPSHOT] 还原被删文件失败', rel, (e as Error).message);
+        }
+      }
+    }
+  });
+  await Promise.all(delTasks);
+  console.log(`[RESTORE] deletedFiles-write(${meta.deletedFiles?.length ?? 0}): ok=${okCount}, failed=${failed.length}, ${(performance.now() - t3).toFixed(0)}ms`);
+
+  if (failed.length > 0) {
+    console.error(`[RESTORE] ${failed.length} 个文件恢复失败，保留快照目录不删除`);
+    console.error('[RESTORE] 失败样本:', failed.slice(0, 5));
+    return false;
+  }
+
+  const t4 = performance.now();
   try { await backupRoot.removeEntry(snap.dirName, { recursive: true }); } catch { /* skip */ }
+  console.log(`[RESTORE] cleanup: ${(performance.now() - t4).toFixed(0)}ms`);
+  console.log(`[RESTORE] total: ${(performance.now() - t0).toFixed(0)}ms`);
 
   return true;
+}
+
+function groupByDir(rels: string[]): Map<string, string[]> {
+  const m = new Map<string, string[]>();
+  for (const rel of rels) {
+    const parts = rel.split('/');
+    parts.pop();
+    const key = parts.join('/');
+    if (!m.has(key)) m.set(key, []);
+    m.get(key)!.push(rel);
+  }
+  return m;
 }
