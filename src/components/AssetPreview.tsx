@@ -223,7 +223,11 @@ export default function AssetPreview({
           maxHeight: 360, overflow: 'hidden',
         }}>
           {loading && SPINNER}
-          <canvas ref={canvasRef} style={{ display: 'block', maxWidth: '100%', maxHeight: 340, height: 'auto' }} />
+          <canvas
+            ref={canvasRef}
+            style={{ display: 'block', maxWidth: '100%', maxHeight: 340, height: 'auto' }}
+            title={asset.width && asset.height ? `${asset.width}×${asset.height}` : undefined}
+          />
         </div>
         {error && <p style={{ color: 'red', fontSize: 12 }}>{error}</p>}
 

@@ -49,6 +49,8 @@ coverage/
 
 # 本地参考资料（体积大，非项目源码）
 .tech_support/
+doc/
+AGENTS.md
 
 # 调试 / 诊断脚本
 scripts/

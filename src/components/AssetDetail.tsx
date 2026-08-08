@@ -119,6 +119,7 @@ export default function AssetDetail({
       </div>
       <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
         {asset.category} · {(asset.size/1024).toFixed(1)} KB
+        {asset.width && asset.height ? ` · ${asset.width}×${asset.height}` : ''}
         <br />
         <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{asset.path}</span>
       </div>

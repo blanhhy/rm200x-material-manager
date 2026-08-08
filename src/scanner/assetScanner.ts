@@ -1,5 +1,8 @@
 import { DIR_TO_CATEGORY, CATEGORY_EXTS } from './assetTypes';
 import type { AssetCategory, AssetFile } from '../types/index';
+import { parsePNG } from '../preview/pngPalette';
+
+const IMAGE_EXTS = new Set(['.png']);
 
 // 模块级 Map：scanner 把预读数据存这里，绕过 React/Zustand 的序列化截断
 // 存 Blob 而不是 ArrayBuffer/Uint8Array——Blob 是浏览器原生二进制封装，
@@ -45,7 +48,7 @@ export async function scanProjectAssets(root: FileSystemDirectoryHandle): Promis
     }));
     for (const { c, size, buf } of infos) {
       prefetchedFileData.set(`${c.dir}/${c.name}`, new Blob([buf]));
-      assets.push({
+      const asset: AssetFile = {
         name: c.name,
         stem: c.stem,
         category: c.category,
@@ -53,7 +56,12 @@ export async function scanProjectAssets(root: FileSystemDirectoryHandle): Promis
         size,
         ext: c.ext,
         handle: c.fileHandle,
-      });
+      };
+      if (IMAGE_EXTS.has(c.ext)) {
+        const { ihdr } = parsePNG(new Uint8Array(buf));
+        if (ihdr) { asset.width = ihdr.width; asset.height = ihdr.height; }
+      }
+      assets.push(asset);
     }
   }
 

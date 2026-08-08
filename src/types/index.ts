@@ -22,12 +22,14 @@ export type AssetCategory =
   | 'Movie';         // Movie/
 
 export interface AssetFile {
-  name: string;          // 文件名（含扩展名）
-  stem: string;          // 不含扩展名的主名
+  name: string;
+  stem: string;
   category: AssetCategory;
-  path: string;          // 相对项目根的路径，如 "Picture/xxx.png"
-  size: number;          // 文件字节数
-  ext: string;           // 扩展名小写
+  path: string;
+  size: number;
+  ext: string;
+  width?: number;
+  height?: number;
   handle?: FileSystemFileHandle;
   prefetchedData?: ArrayBuffer;
 }
