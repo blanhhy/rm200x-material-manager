@@ -4,14 +4,14 @@ export type AssetCategory =
   | 'ChipSet'
   | 'CharSet'
   | 'FaceSet'
-  | 'Backdrop'       // 战斗背景图（terrain.backgroundA/BName, cmd 13210, system.battletestBackground）
+  | 'Backdrop'       // 战斗背景图（terrain.backgroundName 当 type=0, cmd ChangeBattleBG, MapTree.battleBG, system.battletestBackground）
   | 'Battle'         // 战斗动画帧（DB animations[].animationName → 优先 Battle2，fallback Battle）
   | 'Battle2'        // 战斗动画帧 v2（同上）
   | 'BattleCharSet'  // 战斗角色精灵（actor/pose 的 battlerName）
   | 'BattleWeapon'   // 战斗武器精灵（battlerAnimation.weapon[].weaponName）
   | 'Monster'        // 敌人精灵（enemy.battlerName）
-  | 'Panorama'       // 远景图（terrain.backgroundName, map.parallaxName）
-  | 'Picture'        // Picture/（ShowPicture, ChangeBattleBG 的 cmd 13210 也用 Backdrop）
+  | 'Panorama'       // 远景图（terrain.backgroundName 当 type=1, terrain.backgroundA/BName, map.parallaxName, cmd ChangeParallax）
+  | 'Picture'        // Picture/（ShowPicture, MapInfo.backgroundName）
   | 'System'         // System/（system.systemName 等）
   | 'System2'        // System2/
   | 'Title'          // Title/（system.titleName）
@@ -46,9 +46,9 @@ export type ReferenceLocation =
   | { kind: 'Terrain'; terrainId: number; field: string }
   | { kind: 'MapInfo'; mapId: number; field: string }
   | { kind: 'MapUnit'; mapId: number; field: string }
-  | { kind: 'Event'; mapId: number; eventId: number; pageId: number; field: string }
-  | { kind: 'MoveRoute'; mapId: number; eventId: number; pageId: number; commandIdx: number; field: string }
-  | { kind: 'CommonEvent'; ceId: number; field: string }
+  | { kind: 'Event'; mapId: number; eventId: number; pageId: number; commandIdx?: number; cmdName?: string; subIdx?: number; field: string }
+  | { kind: 'MoveRoute'; mapId: number; eventId: number; pageId: number; commandIdx: number; routeCmdIdx?: number; field: string }
+  | { kind: 'CommonEvent'; ceId: number; commandIdx?: number; cmdName?: string; subIdx?: number; field: string }
   | { kind: 'ChipsetRef'; chipsetId: number; field: string }
   | { kind: 'TroopPage'; troopId: number; pageIdx: number; field: string }
   | { kind: 'Unknown'; note: string };
@@ -77,4 +77,5 @@ export interface AssetAnalysis {
   references: AssetReference[];
   inDatabase: boolean;
   onDisk: boolean;
+  inRtp: boolean;
 }

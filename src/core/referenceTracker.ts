@@ -10,6 +10,7 @@ import type {
 } from 'rpgrt';
 import { EventCommandCode, MoveCommandCode } from 'rpgrt';
 import type { AssetCategory, AssetReference, ReferenceLocation, ProjectGameData } from '../types/index';
+import { makeTranscoder } from './lcfLoader';
 
 const UNKNOWN_NAMES = new Set(['', '(OFF)']);
 
@@ -54,10 +55,8 @@ function traceAnimFrames(db: Database, refs: AssetReference[], idx: number, loc:
   if (validIdx(idx, db.animations ?? [])) {
     const anim = db.animations[idx];
     if (validName(anim.animationName)) {
-      const name = anim.animationName.trim();
-      // Battle2 优先
-      pushRef(refs, 'Battle2', name, loc);
-      pushRef(refs, 'Battle', name, loc);
+      const cat = anim.large ? 'Battle2' : 'Battle';
+      pushRef(refs, cat, anim.animationName.trim(), loc);
     }
   }
 }
@@ -74,11 +73,8 @@ function traceBattlerAnimationIdx(
     if (validIdx(pose.battleAnimationId, db.animations ?? [])) {
       const anim = db.animations[pose.battleAnimationId];
       if (validName(anim.animationName)) {
-        const name = anim.animationName.trim();
-        pushRef(refs, 'Battle2', name, {
-          kind: 'Unknown', note: `${label}.pose[${pose.id}].battleAnimationId`,
-        });
-        pushRef(refs, 'Battle', name, {
+        const cat = anim.large ? 'Battle2' : 'Battle';
+        pushRef(refs, cat, anim.animationName.trim(), {
           kind: 'Unknown', note: `${label}.pose[${pose.id}].battleAnimationId`,
         });
       }
@@ -108,11 +104,8 @@ function traceBAItemSkillAnims(
       if (idx != null && validIdx(idx, db.animations ?? [])) {
         const anim = db.animations[idx];
         if (validName(anim.animationName)) {
-          const name = anim.animationName.trim();
-          pushRef(refs, 'Battle2', name, {
-            kind: 'Unknown', note: `${label}[${i}].${field}`,
-          });
-          pushRef(refs, 'Battle', name, {
+          const cat = anim.large ? 'Battle2' : 'Battle';
+          pushRef(refs, cat, anim.animationName.trim(), {
             kind: 'Unknown', note: `${label}[${i}].${field}`,
           });
         }
@@ -128,14 +121,62 @@ function locWithField(loc: ReferenceLocation, field: string): ReferenceLocation 
     case 'Terrain': return { kind: 'Terrain', terrainId: loc.terrainId, field };
     case 'MapInfo': return { kind: 'MapInfo', mapId: loc.mapId, field };
     case 'MapUnit': return { kind: 'MapUnit', mapId: loc.mapId, field };
-    case 'Event': return { kind: 'Event', mapId: loc.mapId, eventId: loc.eventId, pageId: loc.pageId, field };
-    case 'MoveRoute': return { kind: 'MoveRoute', mapId: loc.mapId, eventId: loc.eventId, pageId: loc.pageId, commandIdx: loc.commandIdx, field };
-    case 'CommonEvent': return { kind: 'CommonEvent', ceId: loc.ceId, field };
+    case 'Event': return { kind: 'Event', mapId: loc.mapId, eventId: loc.eventId, pageId: loc.pageId, commandIdx: loc.commandIdx, cmdName: loc.cmdName, subIdx: loc.subIdx, field };
+    case 'MoveRoute': return { kind: 'MoveRoute', mapId: loc.mapId, eventId: loc.eventId, pageId: loc.pageId, commandIdx: loc.commandIdx, routeCmdIdx: loc.routeCmdIdx, field };
+    case 'CommonEvent': return { kind: 'CommonEvent', ceId: loc.ceId, commandIdx: loc.commandIdx, cmdName: loc.cmdName, subIdx: loc.subIdx, field };
     case 'ChipsetRef': return { kind: 'ChipsetRef', chipsetId: loc.chipsetId, field };
     case 'TroopPage': return { kind: 'TroopPage', troopId: loc.troopId, pageIdx: loc.pageIdx, field };
     case 'Unknown': return loc;
   }
 }
+
+function locWithCommandIdx(loc: ReferenceLocation, idx: number): ReferenceLocation {
+  if (loc.kind === 'Event') return { ...loc, commandIdx: idx };
+  if (loc.kind === 'CommonEvent') return { ...loc, commandIdx: idx };
+  if (loc.kind === 'TroopPage') return { ...loc };
+  return loc;
+}
+
+function locWithCmdName(loc: ReferenceLocation, name: string): ReferenceLocation {
+  if (loc.kind === 'Event') return { ...loc, cmdName: name };
+  if (loc.kind === 'CommonEvent') return { ...loc, cmdName: name };
+  return loc;
+}
+
+function locWithSubIdx(loc: ReferenceLocation, subIdx: number): ReferenceLocation {
+  if (loc.kind === 'Event') return { ...loc, subIdx };
+  if (loc.kind === 'CommonEvent') return { ...loc, subIdx };
+  return loc;
+}
+
+const EVENT_CMD_NAMES: Partial<Record<number, string>> = {
+  [EventCommandCode.ChangeFaceGraphic]: 'ChangeFaceGraphic',
+  [EventCommandCode.ChangeSpriteAssociation]: 'ChangeSpriteAssociation',
+  [EventCommandCode.ChangeActorFace]: 'ChangeActorFace',
+  [EventCommandCode.ChangeVehicleGraphic]: 'ChangeVehicleGraphic',
+  [EventCommandCode.ChangeSystemBGM]: 'ChangeSystemBGM',
+  [EventCommandCode.ChangeSystemSFX]: 'ChangeSystemSFX',
+  [EventCommandCode.ChangeSystemGraphics]: 'ChangeSystemGraphics',
+  [EventCommandCode.ChangeScreenTransitions]: 'ChangeScreenTransitions',
+  [EventCommandCode.ShowPicture]: 'ShowPicture',
+  [EventCommandCode.ShowBattleAnimation]: 'ShowBattleAnimation',
+  [EventCommandCode.MoveEvent]: 'MoveEvent',
+  [EventCommandCode.PlayBGM]: 'PlayBGM',
+  [EventCommandCode.PlaySound]: 'PlaySound',
+  [EventCommandCode.PlayMovie]: 'PlayMovie',
+  [EventCommandCode.ChangeMapTileset]: 'ChangeMapTileset',
+  [EventCommandCode.ChangePBG]: 'ChangePBG',
+  [EventCommandCode.ChangeBattleBG]: 'ChangeBattleBG',
+  [EventCommandCode.ShowBattleAnimationB]: 'ShowBattleAnimationB',
+};
+
+const MOVE_CMD_NAMES: Record<number, string> = {
+  0: 'End',
+  [MoveCommandCode.changeGraphic]: 'ChangeGraphic',
+  [MoveCommandCode.playSoundEffect]: 'PlaySoundEffect',
+  [MoveCommandCode.switchOn]: 'SwitchON',
+  [MoveCommandCode.switchOff]: 'SwitchOFF',
+};
 
 type EventLoc = Extract<ReferenceLocation, { kind: 'Event' }>;
 type MoveRouteLoc = Extract<ReferenceLocation, { kind: 'MoveRoute' }>;
@@ -143,9 +184,9 @@ type CommonEventLoc = Extract<ReferenceLocation, { kind: 'CommonEvent' }>;
 type TroopPageLoc = Extract<ReferenceLocation, { kind: 'TroopPage' }>;
 
 type CmdTraceCtx =
-  | { kind: 'event'; loc: EventLoc; db: Database }
-  | { kind: 'common'; loc: CommonEventLoc; db: Database }
-  | { kind: 'troop'; loc: TroopPageLoc; db: Database };
+  | { kind: 'event'; loc: EventLoc; db: Database; decodeStr: (bytes: number[]) => string }
+  | { kind: 'common'; loc: CommonEventLoc; db: Database; decodeStr: (bytes: number[]) => string }
+  | { kind: 'troop'; loc: TroopPageLoc; db: Database; decodeStr: (bytes: number[]) => string };
 
 function resolveCmdLoc(ctx: CmdTraceCtx): ReferenceLocation {
   return ctx.loc;
@@ -252,27 +293,28 @@ function traceChipsets(db: Database, refs: AssetReference[]) {
 
 function traceTerrains(db: Database, refs: AssetReference[]) {
   for (const t of db.terrains ?? []) {
+    // backgroundName 固定 Backdrop（只在 backgroundType=0 时被 Player 使用）
     if (validName(t.backgroundName)) {
-      pushRef(refs, 'Panorama', t.backgroundName, { kind: 'Terrain', terrainId: t.id, field: 'backgroundName' });
+      pushRef(refs, 'Backdrop', t.backgroundName, { kind: 'Terrain', terrainId: t.id, field: 'backgroundName' });
     }
+    // backgroundAName / backgroundBName 是远景图层（type=1 时使用），固定 Panorama
     if (validName(t.backgroundAName)) {
-      pushRef(refs, 'Backdrop', t.backgroundAName, { kind: 'Terrain', terrainId: t.id, field: 'backgroundAName' });
+      pushRef(refs, 'Panorama', t.backgroundAName, { kind: 'Terrain', terrainId: t.id, field: 'backgroundAName' });
     }
     if (validName(t.backgroundBName)) {
-      pushRef(refs, 'Backdrop', t.backgroundBName, { kind: 'Terrain', terrainId: t.id, field: 'backgroundBName' });
+      pushRef(refs, 'Panorama', t.backgroundBName, { kind: 'Terrain', terrainId: t.id, field: 'backgroundBName' });
     }
     const footstep = fromSound(t.footstep);
     if (footstep) pushRef(refs, 'Sound', footstep, { kind: 'Terrain', terrainId: t.id, field: 'footstep' });
   }
 }
 
-// DB animations[].animationName 的自引用（animation 表自己列出来的名字）
-// 每个 animation 的 animationName 引用两张图：先 Battle2，fallback Battle
+// DB animations[].animationName: 按 large 字段决定 Battle / Battle2
 function traceAnimations(db: Database, refs: AssetReference[]) {
   for (const anim of db.animations ?? []) {
     if (validName(anim.animationName)) {
-      pushRef(refs, 'Battle2', anim.animationName, { kind: 'Unknown', note: `Animation[${anim.id}].animationName` });
-      pushRef(refs, 'Battle', anim.animationName, { kind: 'Unknown', note: `Animation[${anim.id}].animationName` });
+      const cat = anim.large ? 'Battle2' : 'Battle';
+      pushRef(refs, cat, anim.animationName, { kind: 'Unknown', note: `Animation[${anim.id}].animationName` });
     }
     for (const timing of anim.timings ?? []) {
       const se = fromSound(timing.se);
@@ -314,93 +356,98 @@ function traceEventCommands(
 ) {
   const db = ctx.db;
   const baseLoc = resolveCmdLoc(ctx);
-  for (const cmd of cmds ?? []) {
+  const arr = cmds ?? [];
+  for (let i = 0; i < arr.length; i++) {
+    const cmd = arr[i];
     const p = cmd.parameters ?? [];
+    const locWithIdx = locWithCommandIdx(baseLoc, i);
+    const cmdName = EVENT_CMD_NAMES[cmd.code];
+    const loc = cmdName ? locWithCmdName(locWithIdx, cmdName) : locWithIdx;
 
     switch (cmd.code) {
-      case 10130:
-        if (validName(cmd.string)) pushRef(refs, 'FaceSet', cmd.string, locWithField(baseLoc, 'ChangeFaceGraphic'));
+      case EventCommandCode.ChangeFaceGraphic:
+        if (validName(cmd.string)) pushRef(refs, 'FaceSet', cmd.string, locWithField(loc, 'ChangeFaceGraphic'));
         break;
-      case 10630:
-        if (validName(cmd.string)) pushRef(refs, 'CharSet', cmd.string, locWithField(baseLoc, 'ChangeSpriteAssociation'));
+      case EventCommandCode.ChangeSpriteAssociation:
+        if (validName(cmd.string)) pushRef(refs, 'CharSet', cmd.string, locWithField(loc, 'ChangeSpriteAssociation'));
         break;
-      case 10640:
-        if (validName(cmd.string)) pushRef(refs, 'FaceSet', cmd.string, locWithField(baseLoc, 'ChangeActorFace'));
+      case EventCommandCode.ChangeActorFace:
+        if (validName(cmd.string)) pushRef(refs, 'FaceSet', cmd.string, locWithField(loc, 'ChangeActorFace'));
         break;
-      case 10650:
-        if (validName(cmd.string)) pushRef(refs, 'CharSet', cmd.string, locWithField(baseLoc, 'ChangeVehicleGraphic'));
+      case EventCommandCode.ChangeVehicleGraphic:
+        if (validName(cmd.string)) pushRef(refs, 'CharSet', cmd.string, locWithField(loc, 'ChangeVehicleGraphic'));
         break;
-      case 10660:
-        if (validName(cmd.string)) pushRef(refs, 'Music', cmd.string, locWithField(baseLoc, 'ChangeSystemBGM'));
+      case EventCommandCode.ChangeSystemBGM:
+        if (validName(cmd.string)) pushRef(refs, 'Music', cmd.string, locWithField(loc, 'ChangeSystemBGM'));
         break;
-      case 10670:
-        if (validName(cmd.string)) pushRef(refs, 'Sound', cmd.string, locWithField(baseLoc, 'ChangeSystemSFX'));
+      case EventCommandCode.ChangeSystemSFX:
+        if (validName(cmd.string)) pushRef(refs, 'Sound', cmd.string, locWithField(loc, 'ChangeSystemSFX'));
         break;
-      case 10680:
-        if (validName(cmd.string)) pushRef(refs, 'System', cmd.string, locWithField(baseLoc, 'ChangeSystemGraphics'));
+      case EventCommandCode.ChangeSystemGraphics:
+        if (validName(cmd.string)) pushRef(refs, 'System', cmd.string, locWithField(loc, 'ChangeSystemGraphics'));
         break;
-      case 10690:
-        if (validName(cmd.string)) pushRef(refs, 'System', cmd.string, locWithField(baseLoc, 'ChangeScreenTransitions'));
+      case EventCommandCode.ChangeScreenTransitions:
+        if (validName(cmd.string)) pushRef(refs, 'System', cmd.string, locWithField(loc, 'ChangeScreenTransitions'));
         break;
-      case 11110:
-        if (validName(cmd.string)) pushRef(refs, 'Picture', cmd.string, locWithField(baseLoc, 'ShowPicture'));
+      case EventCommandCode.ShowPicture:
+        if (validName(cmd.string)) pushRef(refs, 'Picture', cmd.string, locWithField(loc, 'ShowPicture'));
         break;
-      case 11210: {
+      case EventCommandCode.ShowBattleAnimation: {
         const animId = p[0];
         if (validIdx(animId, db.animations ?? [])) {
           const anim = db.animations[animId];
           if (validName(anim.animationName)) {
-            pushRef(refs, 'Battle2', anim.animationName, locWithField(baseLoc, 'ShowBattleAnimation'));
-            pushRef(refs, 'Battle', anim.animationName, locWithField(baseLoc, 'ShowBattleAnimation'));
+            const cat = anim.large ? 'Battle2' : 'Battle';
+            pushRef(refs, cat, anim.animationName, locWithField(loc, 'ShowBattleAnimation'));
           }
         }
         break;
       }
-      case 11510:
-        if (validName(cmd.string)) pushRef(refs, 'Music', cmd.string, locWithField(baseLoc, 'PlayBGM'));
+      case EventCommandCode.PlayBGM:
+        if (validName(cmd.string)) pushRef(refs, 'Music', cmd.string, locWithField(loc, 'PlayBGM'));
         break;
-      case 11550:
-        if (validName(cmd.string)) pushRef(refs, 'Sound', cmd.string, locWithField(baseLoc, 'PlaySound'));
+      case EventCommandCode.PlaySound:
+        if (validName(cmd.string)) pushRef(refs, 'Sound', cmd.string, locWithField(loc, 'PlaySound'));
         break;
-      case 11560:
-        if (validName(cmd.string)) pushRef(refs, 'Movie', cmd.string, locWithField(baseLoc, 'PlayMovie'));
+      case EventCommandCode.PlayMovie:
+        if (validName(cmd.string)) pushRef(refs, 'Movie', cmd.string, locWithField(loc, 'PlayMovie'));
         break;
-      case 11710: {
+      case EventCommandCode.ChangeMapTileset: {
         const csId = p[0];
         if (validIdx(csId, db.chipsets ?? [])) {
           const cs = db.chipsets[csId];
           if (validName(cs.chipsetName)) {
-            pushRef(refs, 'ChipSet', cs.chipsetName, locWithField(baseLoc, 'ChangeMapTileset'));
+            pushRef(refs, 'ChipSet', cs.chipsetName, locWithField(loc, 'ChangeMapTileset'));
           }
         }
         break;
       }
-      case 11720:
-        if (validName(cmd.string)) pushRef(refs, 'Panorama', cmd.string, locWithField(baseLoc, 'ChangePBG'));
+      case EventCommandCode.ChangePBG:
+        if (validName(cmd.string)) pushRef(refs, 'Panorama', cmd.string, locWithField(loc, 'ChangePBG'));
         break;
-      case 13210:
-        // ChangeBattleBG → Backdrop 目录
-        if (validName(cmd.string)) pushRef(refs, 'Backdrop', cmd.string, locWithField(baseLoc, 'ChangeBattleBG'));
+      case EventCommandCode.ChangeBattleBG:
+        if (validName(cmd.string)) pushRef(refs, 'Backdrop', cmd.string, locWithField(loc, 'ChangeBattleBG'));
         break;
-      case 13260: {
+      case EventCommandCode.ShowBattleAnimationB: {
         const animId = p[0];
         if (validIdx(animId, db.animations ?? [])) {
           const anim = db.animations[animId];
           if (validName(anim.animationName)) {
-            pushRef(refs, 'Battle2', anim.animationName, locWithField(baseLoc, 'ShowBattleAnimationB'));
-            pushRef(refs, 'Battle', anim.animationName, locWithField(baseLoc, 'ShowBattleAnimationB'));
+            const cat = anim.large ? 'Battle2' : 'Battle';
+            pushRef(refs, cat, anim.animationName, locWithField(loc, 'ShowBattleAnimationB'));
           }
         }
         break;
       }
       case EventCommandCode.MoveEvent: {
-        const inlineCmds = parseMoveCommandsFromParams(p);
+        const inlineCmds = parseMoveCommandsFromParams(p, ctx.decodeStr);
         for (let ci = 0; ci < inlineCmds.length; ci++) {
           const mc = inlineCmds[ci];
+          const mcName = MOVE_CMD_NAMES[mc.commandId] ?? `MoveCmd[${mc.commandId}]`;
           if (mc.commandId === MoveCommandCode.changeGraphic && validName(mc.parameterString)) {
-            pushRef(refs, 'CharSet', mc.parameterString!, locWithField(baseLoc, `MoveEvent.changeGraphic[${ci}]`));
+            pushRef(refs, 'CharSet', mc.parameterString!, locWithField(locWithSubIdx(loc, ci), mcName));
           } else if (mc.commandId === MoveCommandCode.playSoundEffect && validName(mc.parameterString)) {
-            pushRef(refs, 'Sound', mc.parameterString!, locWithField(baseLoc, `MoveEvent.playSoundEffect[${ci}]`));
+            pushRef(refs, 'Sound', mc.parameterString!, locWithField(locWithSubIdx(loc, ci), mcName));
           }
         }
         break;
@@ -417,9 +464,9 @@ function traceMoveRoute(
   for (let i = 0; i < (cmds ?? []).length; i++) {
     const mc = cmds[i];
     if (mc.commandId === MoveCommandCode.changeGraphic && validName(mc.parameterString)) {
-      pushRef(refs, 'CharSet', mc.parameterString, { ...baseLoc, commandIdx: i, field: 'changeGraphic' });
+      pushRef(refs, 'CharSet', mc.parameterString, { ...baseLoc, routeCmdIdx: i, field: 'ChangeGraphic' });
     } else if (mc.commandId === MoveCommandCode.playSoundEffect && validName(mc.parameterString)) {
-      pushRef(refs, 'Sound', mc.parameterString, { ...baseLoc, commandIdx: i, field: 'playSoundEffect' });
+      pushRef(refs, 'Sound', mc.parameterString, { ...baseLoc, routeCmdIdx: i, field: 'PlaySoundEffect' });
     }
   }
 }
@@ -429,7 +476,11 @@ interface InlineMoveCommand {
   parameterString: string | null;
 }
 
-function parseMoveCommandsFromParams(params: number[], startOffset = 4): InlineMoveCommand[] {
+function parseMoveCommandsFromParams(
+  params: number[],
+  decodeStr: (bytes: number[]) => string,
+  startOffset = 4,
+): InlineMoveCommand[] {
   const cmds: InlineMoveCommand[] = [];
   let i = startOffset;
   while (i < params.length) {
@@ -441,7 +492,7 @@ function parseMoveCommandsFromParams(params: number[], startOffset = 4): InlineM
         const strLen = params[i++];
         const bytes: number[] = [];
         for (let j = 0; j < strLen; j++) bytes.push(params[i++]);
-        mc.parameterString = String.fromCharCode(...bytes);
+        mc.parameterString = decodeStr(bytes);
         i++;
         break;
       }
@@ -449,7 +500,7 @@ function parseMoveCommandsFromParams(params: number[], startOffset = 4): InlineM
         const strLen = params[i++];
         const bytes: number[] = [];
         for (let j = 0; j < strLen; j++) bytes.push(params[i++]);
-        mc.parameterString = String.fromCharCode(...bytes);
+        mc.parameterString = decodeStr(bytes);
         i += 3;
         break;
       }
@@ -463,7 +514,13 @@ function parseMoveCommandsFromParams(params: number[], startOffset = 4): InlineM
   return cmds;
 }
 
-function traceMapUnit(mu: MapUnit, mapId: number, db: Database, refs: AssetReference[]) {
+function traceMapUnit(
+  mu: MapUnit,
+  mapId: number,
+  db: Database,
+  refs: AssetReference[],
+  decodeStr: (bytes: number[]) => string,
+) {
   if (validName(mu.parallaxName)) {
     pushRef(refs, 'Panorama', mu.parallaxName, { kind: 'MapUnit', mapId, field: 'parallaxName' });
   }
@@ -482,7 +539,7 @@ function traceMapUnit(mu: MapUnit, mapId: number, db: Database, refs: AssetRefer
         });
       }
       const eventLoc: EventLoc = { kind: 'Event', mapId, eventId: ev.id, pageId: page.id, field: '' };
-      traceEventCommands(page.eventCommands ?? [], refs, { kind: 'event', loc: eventLoc, db });
+      traceEventCommands(page.eventCommands ?? [], refs, { kind: 'event', loc: eventLoc, db, decodeStr });
       const moveRouteLoc: MoveRouteLoc = { kind: 'MoveRoute', mapId, eventId: ev.id, pageId: page.id, commandIdx: -1, field: '' };
       traceMoveRoute(page.moveRoute?.moveCommands ?? [], refs, moveRouteLoc);
     }
@@ -502,19 +559,27 @@ function traceMapInfo(mi: MapInfo, mapId: number, refs: AssetReference[]) {
   }
 }
 
-function traceCommonEvents(db: Database, refs: AssetReference[]) {
+function traceCommonEvents(
+  db: Database,
+  refs: AssetReference[],
+  decodeStr: (bytes: number[]) => string,
+) {
   for (const ce of db.commonevents ?? []) {
     const loc: CommonEventLoc = { kind: 'CommonEvent', ceId: ce.id, field: '' };
-    traceEventCommands(ce.eventCommands ?? [], refs, { kind: 'common', loc, db });
+    traceEventCommands(ce.eventCommands ?? [], refs, { kind: 'common', loc, db, decodeStr });
   }
 }
 
-function traceTroops(db: Database, refs: AssetReference[]) {
+function traceTroops(
+  db: Database,
+  refs: AssetReference[],
+  decodeStr: (bytes: number[]) => string,
+) {
   for (const troop of db.troops ?? []) {
     for (let pi = 0; pi < (troop.pages ?? []).length; pi++) {
       const page = troop.pages[pi];
       const loc: TroopPageLoc = { kind: 'TroopPage', troopId: troop.id, pageIdx: pi, field: '' };
-      traceEventCommands(page.eventCommands ?? [], refs, { kind: 'troop', loc, db });
+      traceEventCommands(page.eventCommands ?? [], refs, { kind: 'troop', loc, db, decodeStr });
     }
   }
 }
@@ -523,6 +588,9 @@ export function traceAllReferences(data: ProjectGameData): AssetReference[] {
   const refs: AssetReference[] = [];
   const db = data.database;
   if (!db) return refs;
+
+  const transcoder = makeTranscoder(data.encoding as 'shift_jis' | 'gbk' | 'euc_jp' | 'utf8' | 'latin1');
+  const decodeStr = (bytes: number[]) => transcoder.decode(Uint8Array.from(bytes));
 
   if (db.system) traceSystem(db.system, refs);
   traceActors(db, refs);
@@ -543,11 +611,11 @@ export function traceAllReferences(data: ProjectGameData): AssetReference[] {
   }
 
   for (const [mapId, mu] of data.maps) {
-    traceMapUnit(mu, mapId, db, refs);
+    traceMapUnit(mu, mapId, db, refs, decodeStr);
   }
 
-  traceCommonEvents(db, refs);
-  traceTroops(db, refs);
+  traceCommonEvents(db, refs, decodeStr);
+  traceTroops(db, refs, decodeStr);
 
   return refs;
 }

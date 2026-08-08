@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import type { AssetCategory, AssetFile } from '../types/index';
+import type { AssetCategory, AssetFile, AssetAnalysis, EngineVersion } from '../types/index';
 import { parsePNGPalette0, replaceColorWithTransparency, swapPalette0WithRGB, parsePNG } from '../preview/pngPalette';
+import { getBundledRtpUrl } from '../core/rtpIndex';
 import TransparentColorPicker from './TransparentColorPicker';
 
 const IMAGE_CATS: AssetCategory[] = [
@@ -26,9 +27,13 @@ const SPINNER = (
 
 export default function AssetPreview({
   asset,
+  analysis,
+  engine,
   onSaved,
 }: {
   asset: AssetFile | null;
+  analysis?: AssetAnalysis | null;
+  engine?: EngineVersion;
   onSaved?: () => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -143,6 +148,64 @@ export default function AssetPreview({
     };
   }, [asset, useTransparency, previewRev]);
 
+  // 内置 RTP 图片预览：当素材不在磁盘但识别为 RTP 时，从内置 RTP 加载
+  useEffect(() => {
+    setError(null);
+    const canvas = canvasRef.current;
+    if (canvas) { canvas.width = 0; canvas.height = 0; }
+    if (!asset || asset.handle !== undefined || !IMAGE_CATS.includes(asset.category) || !analysis?.inRtp || !engine) return;
+
+    const rtpUrl = getBundledRtpUrl(asset.name, asset.category, engine);
+    if (!rtpUrl) return;
+
+    let cancelled = false;
+    setLoading(true);
+
+    (async () => {
+      try {
+        const resp = await fetch(rtpUrl);
+        if (!resp.ok || cancelled) { setLoading(false); return; }
+        const buf = new Uint8Array(await resp.arrayBuffer());
+        if (cancelled) return;
+        setCurrentPngBytes(buf);
+
+        const pal0 = parsePNGPalette0(buf);
+        setPalette0(pal0);
+
+        const url = URL.createObjectURL(new Blob([buf]));
+        const img = new Image();
+        img.onload = () => {
+          if (cancelled) return;
+          const c = canvasRef.current;
+          if (!c) return;
+          c.width = img.width;
+          c.height = img.height;
+          const ctx = c.getContext('2d');
+          if (!ctx) return;
+          ctx.clearRect(0, 0, c.width, c.height);
+          ctx.drawImage(img, 0, 0);
+          if (useTransparency && pal0) {
+            const imgData = ctx.getImageData(0, 0, c.width, c.height);
+            replaceColorWithTransparency(imgData, pal0.r, pal0.g, pal0.b);
+            ctx.putImageData(imgData, 0, 0);
+          }
+          if (!cancelled) setLoading(false);
+          URL.revokeObjectURL(url);
+        };
+        img.onerror = () => {
+          if (cancelled) return;
+          setLoading(false);
+          URL.revokeObjectURL(url);
+        };
+        img.src = url;
+      } catch {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [asset, useTransparency, analysis?.inRtp, engine, previewRev]);
+
   const handleColorConfirm = useCallback(async (targetRGB: { r: number; g: number; b: number }) => {
     if (!asset || !asset.handle || !currentPngBytes) return;
 
@@ -180,6 +243,49 @@ export default function AssetPreview({
   }
 
   if (asset.handle === undefined) {
+    const isRtpImage = analysis?.inRtp && IMAGE_CATS.includes(asset.category) && engine;
+    const isRtpAudio = analysis?.inRtp && AUDIO_CATS.includes(asset.category);
+    const isRtpVideo = analysis?.inRtp && VIDEO_CATS.includes(asset.category);
+
+    if (isRtpImage) {
+      return (
+        <div style={{ padding: 12 }}>
+          <div style={{ marginBottom: 8, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            <label style={{ fontSize: 13 }}>
+              <input type="checkbox" checked={useTransparency} onChange={e => setUseTransparency(e.target.checked)} />
+              透明色
+            </label>
+          </div>
+          <div style={{
+            position: 'relative',
+            backgroundImage: 'linear-gradient(45deg, var(--color-checker-a) 25%, transparent 25%), linear-gradient(-45deg, var(--color-checker-b) 25%, transparent 25%), linear-gradient(45deg, transparent 75%, var(--color-checker-b) 75%), linear-gradient(-45deg, transparent 75%, var(--color-checker-a) 75%)',
+            backgroundSize: '16px 16px', backgroundPosition: '0 0, 0 8px, 8px -8px, -8px 0px',
+            border: '1px solid var(--color-border)', display: 'inline-block', minWidth: 80, minHeight: 40,
+            maxHeight: 360, overflow: 'hidden',
+          }}>
+            {loading && SPINNER}
+            <canvas
+              ref={canvasRef}
+              style={{ display: 'block', maxWidth: '100%', maxHeight: 340, height: 'auto' }}
+            />
+          </div>
+          {error && <p style={{ color: 'red', fontSize: 12 }}>{error}</p>}
+        </div>
+      );
+    }
+
+    if (isRtpAudio || isRtpVideo) {
+      return (
+        <div style={{ padding: 12 }}>
+          <div style={{ background: 'var(--color-bg-subtle)', border: '1px dashed var(--color-border-strong)', borderRadius: 6, padding: 40, textAlign: 'center', color: 'var(--color-text-muted)' }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>🎵</div>
+            <div style={{ fontSize: 13, color: 'var(--color-text)', marginBottom: 4 }}>{asset.name}</div>
+            <div style={{ fontSize: 12, color: 'var(--color-warning-text)' }}>暂不支持预览 RTP {isRtpAudio ? '音频' : '视频'}</div>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div style={{ padding: 12 }}>
         <div style={{ background: 'var(--color-bg-subtle)', border: '1px dashed var(--color-border-strong)', borderRadius: 6, padding: 40, textAlign: 'center', color: 'var(--color-text-muted)' }}>

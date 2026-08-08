@@ -27,6 +27,8 @@ function assetKey(cat: string, stem: string): string {
 
 const V2K3_ONLY = ['Battle2','BattleCharSet','BattleWeapon','System2'] as const;
 
+const FILTER_LABEL: Record<string, string> = { all:'全部', disk:'素材库', refs:'数据库', used:'已使用', unused:'未使用', rtp:'RTP', missing:'缺失' };
+
 function getCategories(engine: '2k' | '2k3'): readonly string[] {
   return engine === '2k3'
     ? [...CORE_CATEGORIES, ...V2K3_ONLY]
@@ -416,7 +418,7 @@ export default function App() {
       const refs = traceAllReferences(data);
       console.log(`[性能] traceAllReferences: ${(performance.now() - t1).toFixed(0)}ms · ${refs.length} refs`);
 
-      const { allAssets, analyses: map } = buildAnalyses(found, refs);
+      const { allAssets, analyses: map } = buildAnalyses(found, refs, data.engine);
       setAssets(allAssets);
       setAnalyses(map);
 
@@ -437,6 +439,14 @@ export default function App() {
         console.groupEnd();
       }
       console.groupEnd();
+      // TEMP: dump analyses for diagnosis
+      (window as any).__DIAG_ANALYSES = Array.from(map.values()).map(e => ({
+        cat: e.asset.category,
+        name: e.asset.stem,
+        onDisk: e.onDisk,
+        inRtp: e.inRtp,
+        refs: e.references.length,
+      }));
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -478,7 +488,7 @@ export default function App() {
       // 重跑引用追踪
       const refs = traceAllReferences(newData);
       const diskOnly = assets.filter(a => a.handle !== undefined);
-      const { allAssets, analyses: map } = buildAnalyses(diskOnly, refs);
+      const { allAssets, analyses: map } = buildAnalyses(diskOnly, refs, newData.engine);
       setAssets(allAssets);
       setAnalyses(map);
 
@@ -501,7 +511,8 @@ export default function App() {
       case 'refs':    return inDb;
       case 'used':    return onDisk && inDb;
       case 'unused':  return onDisk && !inDb;
-      case 'missing': return !onDisk && inDb;
+      case 'rtp':     return !onDisk && entry.inRtp;
+      case 'missing': return !onDisk && inDb && !entry.inRtp;
       default:        return true;
     }
   }), [assets, activeCategory, filterUsed, analyses]);
@@ -584,7 +595,7 @@ export default function App() {
       // 重跑引用分析
       const refs = traceAllReferences(gameData);
       const diskOnly = newAssets.filter(a => a.handle !== undefined);
-      const { allAssets, analyses: map } = buildAnalyses(diskOnly, refs);
+      const { allAssets, analyses: map } = buildAnalyses(diskOnly, refs, gameData.engine);
       setAssets(allAssets);
       setAnalyses(map);
 
@@ -646,7 +657,7 @@ export default function App() {
       } else {
         refs = Array.from(analyses.values()).flatMap(e => e.references);
       }
-      const { allAssets, analyses: map } = buildAnalyses(found, refs);
+      const { allAssets, analyses: map } = buildAnalyses(found, refs, newData.engine);
       setGameData(newData);
       setAssets(allAssets);
       setAnalyses(map);
@@ -702,7 +713,7 @@ export default function App() {
 
       const diskOnly = newAssets.filter(a => a.handle !== undefined);
       const refs = traceAllReferences(gameData);
-      const { allAssets, analyses: newAnalyses } = buildAnalyses(diskOnly, refs);
+      const { allAssets, analyses: newAnalyses } = buildAnalyses(diskOnly, refs, gameData.engine);
       setAssets(allAssets);
       setAnalyses(newAnalyses);
 
@@ -892,7 +903,7 @@ export default function App() {
             <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--color-border)', background: 'var(--color-bg-elev)' }}>
               <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                 <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>筛选</span>
-                {(['all','disk','refs','used','unused','missing'] as const).map(f => (
+                {(['all','disk','refs','used','unused','rtp','missing'] as const).map(f => (
                   <button key={f} onClick={() => { setFilterUsed(f); setSelectedKeys(new Set()); }} disabled={!gameData} style={{
                     padding: '4px 12px', border: '1px solid var(--color-border)',
                     background: filterUsed === f ? 'var(--color-text)' : 'var(--color-bg-elev)',
@@ -902,7 +913,7 @@ export default function App() {
                     opacity: gameData ? 1 : 0.5,
                     transition: 'all 0.15s',
                   }}>
-                    {{ all:'全部', disk:'素材库', refs:'数据库', used:'已使用', unused:'未使用', missing:'缺失' }[f]}
+                    {FILTER_LABEL[f]}
                   </button>
                 ))}
                 <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--color-text-muted)' }}>
@@ -978,7 +989,10 @@ export default function App() {
                     const isBatchSel = selectedKeys.has(k);
                     const inBatchMode = selectedKeys.size > 0;
                     const isXyz = a.ext === '.xyz';
-                    const isMissing = a.handle === undefined;
+                    const onDisk = a.handle !== undefined;
+                    const isRtp = !onDisk && !!entry?.inRtp;
+                    const isMissing = !onDisk && !entry?.inRtp;
+                    const isOff = !onDisk;
 
                     function handleCardClick(e: React.MouseEvent) {
                       if (e.shiftKey || inBatchMode) {
@@ -998,7 +1012,7 @@ export default function App() {
                         style={{
                           listStyle: 'none',
                           border: isBatchSel ? '2px solid var(--color-danger)' : isSel ? '2px solid var(--color-primary)' : '1px solid var(--color-border)',
-                          background: isBatchSel ? 'var(--color-danger-soft)' : isSel ? 'var(--color-primary-soft)' : isMissing ? 'var(--color-bg-warning-soft, #fffbeb)' : 'var(--color-bg-elev)',
+                          background: isBatchSel ? 'var(--color-danger-soft)' : isSel ? 'var(--color-primary-soft)' : 'var(--color-bg-elev)',
                           padding: 10, borderRadius: 6,
                           cursor: 'pointer', transition: 'all 0.12s', height: '100%',
                           boxShadow: isSel ? '0 2px 8px rgba(59,130,246,0.15)' : isBatchSel ? '0 2px 8px rgba(220,38,38,0.12)' : 'none',
@@ -1019,29 +1033,29 @@ export default function App() {
                         }}>
                           {isBatchSel ? '✓' : ''}
                         </div>
-                        <div style={{ fontSize: 12, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 3, color: 'var(--color-text)', paddingRight: 20, minWidth: 0, display: 'flex', gap: 4, alignItems: 'center' }}>
-                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</span>
-                          {isMissing && (
-                            <span style={{ fontSize: 9, background: 'var(--color-danger)', color: '#fff', padding: '1px 5px', borderRadius: 3, fontWeight: 700, flexShrink: 0 }}>缺失</span>
-                          )}
+                        <div style={{ fontSize: 12, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 3, color: 'var(--color-text)', paddingRight: 20, minWidth: 0 }}>
+                          {a.name}
                         </div>
                         <div style={{ fontSize: 11, display: 'flex', gap: 6, alignItems: 'center', minWidth: 0, overflow: 'hidden' }}>
-                          {isMissing ? (
-                            <span style={{ color: 'var(--color-warning-text, #d97706)', fontWeight: 500 }}>引用 {entry?.references.length ?? 0} 处</span>
+                          {isOff ? (
+                            <span style={{ color: 'var(--color-text-muted)', fontWeight: 500 }}>引用 {entry?.references.length ?? 0} 处</span>
                           ) : (
                             <span style={{ color: entry?.inDatabase ? 'var(--color-success-text)' : 'var(--color-danger)', fontWeight: 500 }}>
                               {entry?.inDatabase ? `已使用 ${entry.references.length}` : '未使用'}
                             </span>
                           )}
-                          {!isMissing && isXyz && (
+                          {!isOff && isXyz && (
                             <span style={{ fontSize: 9, background: 'var(--color-bg-warning)', color: 'var(--color-warning-text)', padding: '1px 5px', borderRadius: 3, fontWeight: 600 }}>XYZ</span>
                           )}
                         </div>
-                        {!isMissing && (
+                        {!isOff && (
                           <div style={{ fontSize: 10, color: 'var(--color-text-muted)', marginTop: 2 }}>{(a.size/1024).toFixed(1)} KB</div>
                         )}
+                        {isRtp && (
+                          <div style={{ fontSize: 10, color: 'var(--color-warning-text)', marginTop: 2 }}>使用 RTP 素材</div>
+                        )}
                         {isMissing && (
-                          <div style={{ fontSize: 10, color: 'var(--color-danger)', marginTop: 2 }}>文件不存在</div>
+                          <div style={{ fontSize: 10, color: 'var(--color-danger)', marginTop: 2 }}>素材缺失</div>
                         )}
                       </div>
                     );
@@ -1053,11 +1067,12 @@ export default function App() {
 
           <aside style={{ width: 350, borderLeft: '1px solid var(--color-border)', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--color-bg-elev)' }}>
             <div style={{ overflowY: 'auto', borderBottom: '1px solid var(--color-bg-hover)' }}>
-              <AssetPreview asset={selectedAsset} onSaved={() => gameData?.rootHandle && refreshSnapshots(gameData.rootHandle)} />
+              <AssetPreview asset={selectedAsset} analysis={selectedAnalysis} engine={gameData?.engine} onSaved={() => gameData?.rootHandle && refreshSnapshots(gameData.rootHandle)} />
             </div>
             <div style={{ flex: 1, overflowY: 'auto' }}>
               <AssetDetail
                 analysis={selectedAnalysis}
+                engine={gameData?.engine}
                 onRename={handleRename}
                 renaming={renaming}
                 onDelete={() => {
@@ -1074,3 +1089,11 @@ export default function App() {
     </div>
   );
 }
+
+
+
+
+
+
+
+

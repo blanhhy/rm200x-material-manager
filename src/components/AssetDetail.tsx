@@ -1,31 +1,81 @@
 import { useState } from 'react';
-import type { AssetAnalysis } from '../types/index';
+import type { AssetAnalysis, EngineVersion } from '../types/index';
+import { lookupRTPAlternative } from '../core/rtpIndex';
+
+const pad4 = (id: number) => String(id).padStart(4, '0');
 
 function locToString(loc: AssetAnalysis['references'][number]['location']): string {
   switch (loc.kind) {
-    case 'System':       return `System.${loc.field}`;
-    case 'Actor':        return `Actor[${loc.actorId}].${loc.field}`;
-    case 'Terrain':      return `Terrain[${loc.terrainId}].${loc.field}`;
-    case 'MapInfo':      return `MapInfo[${loc.mapId}].${loc.field}`;
-    case 'MapUnit':      return `Map${String(loc.mapId).padStart(4,'0')}.${loc.field}`;
-    case 'Event':        return `Map${String(loc.mapId).padStart(4,'0')} Event${loc.eventId} Page${loc.pageId} → ${loc.field}`;
-    case 'MoveRoute':    return `Map${String(loc.mapId).padStart(4,'0')} Event${loc.eventId} Page${loc.pageId} Route Cmd[${loc.commandIdx}] → ${loc.field}`;
-    case 'CommonEvent':  return `CommonEvent[${loc.ceId}].${loc.field}`;
-    case 'ChipsetRef':   return `Chipset[${loc.chipsetId}].${loc.field}`;
-    case 'TroopPage':    return `Troop[${loc.troopId}] Page${loc.pageIdx}.${loc.field}`;
-    case 'Unknown':      return loc.note ?? 'Unknown';
-    default:             return JSON.stringify(loc);
+    case 'System':
+      return `System.${loc.field}`;
+    case 'Actor':
+      return `Actor[${loc.actorId}].${loc.field}`;
+    case 'Terrain':
+      return `Terrain[${loc.terrainId}].${loc.field}`;
+    case 'MapInfo':
+      return `Map${pad4(loc.mapId)}.info.${loc.field}`;
+    case 'MapUnit':
+      return `Map${pad4(loc.mapId)}.${loc.field}`;
+    case 'Event': {
+      const path = `Map${pad4(loc.mapId)}.Event${loc.eventId}.Page${loc.pageId}`;
+      if (loc.commandIdx !== undefined) {
+        const cmdRef = `${path}.cmd[Line: ${loc.commandIdx + 1}]`;
+        const name = loc.cmdName;
+        if (loc.subIdx !== undefined && name) {
+          return `${cmdRef} → ${name}[${loc.subIdx + 1}] → ${loc.field}`;
+        } else if (name && name !== loc.field) {
+          return `${cmdRef} → ${name} → ${loc.field}`;
+        } else if (name) {
+          return `${cmdRef} → ${name}`;
+        }
+        return `${cmdRef} → ${loc.field}`;
+      }
+      return `${path}.${loc.field}`;
+    }
+    case 'MoveRoute': {
+      const path = `Map${pad4(loc.mapId)}.Event${loc.eventId}.Page${loc.pageId}.moveRoute`;
+      if (loc.routeCmdIdx !== undefined) {
+        return `${path}[${loc.routeCmdIdx + 1}] → ${loc.field}`;
+      }
+      return path;
+    }
+    case 'CommonEvent': {
+      const path = `CommonEvent[${loc.ceId}]`;
+      if (loc.commandIdx !== undefined) {
+        const cmdRef = `${path}.cmd[Line: ${loc.commandIdx + 1}]`;
+        const name = loc.cmdName;
+        if (loc.subIdx !== undefined && name) {
+          return `${cmdRef} → ${name}[${loc.subIdx + 1}] → ${loc.field}`;
+        } else if (name && name !== loc.field) {
+          return `${cmdRef} → ${name} → ${loc.field}`;
+        } else if (name) {
+          return `${cmdRef} → ${name}`;
+        }
+        return `${cmdRef} → ${loc.field}`;
+      }
+      return `${path}.${loc.field}`;
+    }
+    case 'ChipsetRef':
+      return `Chipset[${loc.chipsetId}].${loc.field}`;
+    case 'TroopPage':
+      return `Troop[${loc.troopId}].Page[${loc.pageIdx + 1}].${loc.field}`;
+    case 'Unknown':
+      return loc.note ?? 'Unknown';
+    default:
+      return JSON.stringify(loc);
   }
 }
 
 export default function AssetDetail({
   analysis,
+  engine,
   onRename,
   renaming,
   onDelete,
   deleting,
 }: {
   analysis: AssetAnalysis | null;
+  engine?: EngineVersion;
   onRename: (newStem: string) => Promise<void> | void;
   renaming: boolean;
   onDelete?: () => void;
@@ -118,8 +168,8 @@ export default function AssetDetail({
         )}
       </div>
       {!analysis.onDisk && (
-        <div style={{ fontSize: 12, color: 'var(--color-danger)', marginBottom: 12 }}>
-          {asset.category} · 文件不存在
+        <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
+          {asset.category} · {analysis.inRtp ? `RTP::${lookupRTPAlternative(asset.name, asset.category, engine!) ?? asset.name}` : '文件不存在'}
         </div>
       )}
       {analysis.onDisk && (

@@ -70,9 +70,9 @@ export function applyRenameToDatabase(
   }
 
   for (const t of db.terrains ?? []) {
-    check(t.backgroundName, 'Panorama', v => { t.backgroundName = v; });
-    check(t.backgroundAName, 'Backdrop', v => { t.backgroundAName = v; });
-    check(t.backgroundBName, 'Backdrop', v => { t.backgroundBName = v; });
+    check(t.backgroundName, 'Backdrop', v => { t.backgroundName = v; });
+    check(t.backgroundAName, 'Panorama', v => { t.backgroundAName = v; });
+    check(t.backgroundBName, 'Panorama', v => { t.backgroundBName = v; });
     const fs = t.footstep as { name?: string } | undefined;
     if (fs?.name) check(fs.name, 'Sound', v => { fs.name = v; });
   }

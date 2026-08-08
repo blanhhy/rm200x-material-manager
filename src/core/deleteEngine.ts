@@ -103,9 +103,9 @@ function dbReferencesCategory(db: Database, namesByCat: Map<AssetCategory, Set<s
     const backs = namesByCat.get('Backdrop');
     const sounds = namesByCat.get('Sound');
     for (const t of db.terrains ?? []) {
-      if (pans && matchesAny(t.backgroundName, pans)) return true;
-      if (backs && matchesAny(t.backgroundAName, backs)) return true;
-      if (backs && matchesAny(t.backgroundBName, backs)) return true;
+      if (backs && matchesAny(t.backgroundName, backs)) return true;
+      if (pans && matchesAny(t.backgroundAName, pans)) return true;
+      if (pans && matchesAny(t.backgroundBName, pans)) return true;
       if (sounds) {
         const fs = t.footstep as { name?: string } | undefined;
         if (matchesAny(fs?.name, sounds)) return true;
@@ -214,9 +214,9 @@ export function applyClearToDatabase(
   }
 
   for (const t of db.terrains ?? []) {
-    check(t.backgroundName, 'Panorama', v => { t.backgroundName = v; });
-    check(t.backgroundAName, 'Backdrop', v => { t.backgroundAName = v; });
-    check(t.backgroundBName, 'Backdrop', v => { t.backgroundBName = v; });
+    check(t.backgroundName, 'Backdrop', v => { t.backgroundName = v; });
+    check(t.backgroundAName, 'Panorama', v => { t.backgroundAName = v; });
+    check(t.backgroundBName, 'Panorama', v => { t.backgroundBName = v; });
     const fs = t.footstep as { name?: string } | undefined;
     if (fs?.name) check(fs.name, 'Sound', v => { fs.name = v; });
   }

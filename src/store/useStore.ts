@@ -29,8 +29,8 @@ interface Store {
   selectedAssetKey: string | null;
   setSelectedAssetKey: (k: string | null) => void;
 
-  filterUsed: 'all' | 'disk' | 'refs' | 'used' | 'unused' | 'missing';
-  setFilterUsed: (f: 'all' | 'disk' | 'refs' | 'used' | 'unused' | 'missing') => void;
+  filterUsed: 'all' | 'disk' | 'refs' | 'used' | 'unused' | 'rtp' | 'missing';
+  setFilterUsed: (f: 'all' | 'disk' | 'refs' | 'used' | 'unused' | 'rtp' | 'missing') => void;
 
   loading: boolean;
   error: string | null;
@@ -106,3 +106,4 @@ export const useStore = create<Store>((set, get) => ({
     }
   },
 }));
+
