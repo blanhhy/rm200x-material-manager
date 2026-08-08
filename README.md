@@ -15,4 +15,5 @@ npm run dev
 ## Credits
 
 [EasyRPG](https://easyrpg.org/)
+
 [rpgrt](https://github.com/johannschopplich/rpgrt)
