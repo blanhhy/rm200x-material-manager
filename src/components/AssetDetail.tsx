@@ -13,7 +13,7 @@ function locToString(loc: AssetAnalysis['references'][number]['location']): stri
     case 'CommonEvent':  return `CommonEvent[${loc.ceId}].${loc.field}`;
     case 'ChipsetRef':   return `Chipset[${loc.chipsetId}].${loc.field}`;
     case 'TroopPage':    return `Troop[${loc.troopId}] Page${loc.pageIdx}.${loc.field}`;
-    case 'Unknown':      return `Unknown: ${loc.note}`;
+    case 'Unknown':      return loc.note ?? 'Unknown';
     default:             return JSON.stringify(loc);
   }
 }
