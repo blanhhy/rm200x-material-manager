@@ -169,7 +169,7 @@ export default function AssetDetail({
       </div>
       {!analysis.onDisk && (
         <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
-          {asset.category} · {analysis.inRtp ? `RTP::${lookupRTPAlternative(asset.name, asset.category, engine!) ?? asset.name}` : '文件不存在'}
+          {asset.category} · {analysis.inRtp ? `RTP::${engine ? (lookupRTPAlternative(asset.name, asset.category, engine) ?? asset.name) : asset.name}` : '文件不存在'}
         </div>
       )}
       {analysis.onDisk && (
