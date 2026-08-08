@@ -179,6 +179,18 @@ export default function AssetPreview({
     return <div style={{ padding: 16, color: 'var(--color-text-muted)', fontStyle: 'italic' }}>选中一个素材查看预览</div>;
   }
 
+  if (asset.handle === undefined) {
+    return (
+      <div style={{ padding: 12 }}>
+        <div style={{ background: 'var(--color-bg-subtle)', border: '1px dashed var(--color-border-strong)', borderRadius: 6, padding: 40, textAlign: 'center', color: 'var(--color-text-muted)' }}>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>❓</div>
+          <div style={{ fontSize: 13, color: 'var(--color-text)', marginBottom: 4 }}>{asset.name}</div>
+          <div style={{ fontSize: 12, color: 'var(--color-danger)' }}>磁盘上未找到此文件</div>
+        </div>
+      </div>
+    );
+  }
+
   if (asset.ext === '.xyz') {
     return (
       <div style={{ padding: 12 }}>

@@ -390,7 +390,7 @@ async function writeFile(root: FileSystemDirectoryHandle, fileName: string, data
 export async function deleteAssets(
   data: ProjectGameData,
   assets: AssetFile[],
-  clearReferences: boolean = true,
+  clearReferences: boolean = false,
 ): Promise<DeleteResult> {
   if (!data.encoding) {
     return { success: false, message: '项目编码未知', filesWritten: [], filesDeleted: [] };
@@ -431,7 +431,8 @@ export async function deleteAssets(
   }
 
   const root = data.rootHandle!;
-  const filesToDelete = assets.map(a => a.path);
+  const diskAssets = assets.filter(a => a.handle !== undefined);
+  const filesToDelete = diskAssets.map(a => a.path);
 
   let dbClone: Database | null = null;
   let treeMapClone: TreeMap | null = null;
@@ -478,12 +479,12 @@ export async function deleteAssets(
   console.time('[DELETE] read-blobs');
 
   const blobResults = await Promise.allSettled(
-    assets.map(async (a) => {
+    diskAssets.map(async (a) => {
       const pre = prefetchedFileData.get(a.path);
       if (pre instanceof Blob && pre.size > 0) {
         return { path: a.path, blob: pre };
       }
-      const fh = (a as any).handle as FileSystemFileHandle;
+      const fh = a.handle!;
       const f = await fh.getFile();
       return { path: a.path, blob: f };
     })
@@ -534,7 +535,7 @@ export async function deleteAssets(
     return h;
   };
   const deleteResults = await Promise.allSettled(
-    assets.map(async (a) => {
+    diskAssets.map(async (a) => {
       const dirName = a.path.split('/')[0];
       const dirHandle = await getDir(dirName);
       await dirHandle.removeEntry(a.name);
@@ -548,7 +549,7 @@ export async function deleteAssets(
     if (r.status === 'fulfilled') {
       filesDeleted.push(r.value);
     } else {
-      failedToDelete.push(`${assets[i].name}: ${(r.reason as Error).message}`);
+      failedToDelete.push(`${diskAssets[i].name}: ${(r.reason as Error).message}`);
     }
   }
   console.timeEnd('[DELETE] disk-delete');

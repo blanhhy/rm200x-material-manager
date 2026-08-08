@@ -29,8 +29,8 @@ interface Store {
   selectedAssetKey: string | null;
   setSelectedAssetKey: (k: string | null) => void;
 
-  filterUsed: 'all' | 'used' | 'unused';
-  setFilterUsed: (f: 'all' | 'used' | 'unused') => void;
+  filterUsed: 'all' | 'disk' | 'refs' | 'used' | 'unused' | 'missing';
+  setFilterUsed: (f: 'all' | 'disk' | 'refs' | 'used' | 'unused' | 'missing') => void;
 
   loading: boolean;
   error: string | null;
@@ -65,7 +65,7 @@ export const useStore = create<Store>((set, get) => ({
   setActiveCategory: (c) => set({ activeCategory: c }),
   selectedAssetKey: null,
   setSelectedAssetKey: (k) => set({ selectedAssetKey: k }),
-  filterUsed: 'all',
+  filterUsed: 'disk',
   setFilterUsed: (f) => set({ filterUsed: f }),
   loading: false,
   error: null,

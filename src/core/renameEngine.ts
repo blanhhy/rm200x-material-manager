@@ -327,39 +327,41 @@ export async function renameAsset(
   }
 
   const filesRenamed: string[] = [];
-  try {
-    const dirHandle = await root.getDirectoryHandle(dirName);
-    const fileHandle = await dirHandle.getFileHandle(asset.name);
-
+  if (asset.handle !== undefined) {
     try {
-      await dirHandle.getFileHandle(newFileName);
-      return { success: false, message: `目标文件名已存在：${newFileName}`, filesWritten, filesRenamed };
-    } catch {
-      // 不存在
-    }
+      const dirHandle = await root.getDirectoryHandle(dirName);
+      const fileHandle = await dirHandle.getFileHandle(asset.name);
 
-    // move() 重命名（Chrome 123+）
-    const fh = fileHandle as unknown as { move?: (name: string) => Promise<void> };
-    if (typeof fh.move === 'function') {
-      await fh.move(newFileName);
-    } else {
-      // Fallback: read → write new → remove old
-      const file = await fileHandle.getFile();
-      const newHandle = await dirHandle.getFileHandle(newFileName, { create: true });
-      const writable = await newHandle.createWritable();
-      await writable.write(file);
-      await writable.close();
-      // remove old via dir handle
-      await dirHandle.removeEntry(asset.name);
+      try {
+        await dirHandle.getFileHandle(newFileName);
+        return { success: false, message: `目标文件名已存在：${newFileName}`, filesWritten, filesRenamed };
+      } catch {
+        // 不存在
+      }
+
+      // move() 重命名（Chrome 123+）
+      const fh = fileHandle as unknown as { move?: (name: string) => Promise<void> };
+      if (typeof fh.move === 'function') {
+        await fh.move(newFileName);
+      } else {
+        // Fallback: read → write new → remove old
+        const file = await fileHandle.getFile();
+        const newHandle = await dirHandle.getFileHandle(newFileName, { create: true });
+        const writable = await newHandle.createWritable();
+        await writable.write(file);
+        await writable.close();
+        // remove old via dir handle
+        await dirHandle.removeEntry(asset.name);
+      }
+      filesRenamed.push(`${asset.name} → ${newFileName}`);
+    } catch (e) {
+      return {
+        success: false,
+        message: `磁盘文件重命名失败：${(e as Error).message}`,
+        filesWritten,
+        filesRenamed,
+      };
     }
-    filesRenamed.push(`${asset.name} → ${newFileName}`);
-  } catch (e) {
-    return {
-      success: false,
-      message: `磁盘文件重命名失败：${(e as Error).message}`,
-      filesWritten,
-      filesRenamed,
-    };
   }
 
   // 更新内存

@@ -3,6 +3,7 @@ import { useStore } from './store/useStore';
 import { loadGameProject, reDecodeWithEncoding } from './core/lcfLoader';
 import { scanProjectAssets } from './scanner/assetScanner';
 import { traceAllReferences } from './core/referenceTracker';
+import { buildAnalyses } from './core/assetAnalyzer';
 import { renameAsset } from './core/renameEngine';
 import { deleteAssets } from './core/deleteEngine';
 import { restoreSnapshot } from './core/snapshot';
@@ -10,7 +11,7 @@ import type { SnapshotInfo } from './core/snapshot';
 import AssetPreview from './components/AssetPreview';
 import AssetDetail from './components/AssetDetail';
 import VirtualGrid from './components/VirtualGrid';
-import type { AssetAnalysis, AssetReference } from './types/index';
+import type { AssetReference } from './types/index';
 
 const CORE_CATEGORIES = [
   'ChipSet','CharSet','FaceSet',
@@ -19,6 +20,10 @@ const CORE_CATEGORIES = [
   'System','Title','GameOver','Frame',
   'Music','Sound','Movie',
 ] as const;
+
+function assetKey(cat: string, stem: string): string {
+  return `${cat}/${stem.toLowerCase()}`;
+}
 
 const V2K3_ONLY = ['Battle2','BattleCharSet','BattleWeapon','System2'] as const;
 
@@ -377,7 +382,6 @@ export default function App() {
 
   async function loadFromRoot(root: FileSystemDirectoryHandle, opts?: { keepState?: boolean; encoding?: string }) {
     const { keepState = false, encoding } = opts ?? {};
-    const key = (cat: string, stem: string) => `${cat}/${stem.toLowerCase()}`;
     try {
       setError(null);
 
@@ -385,7 +389,7 @@ export default function App() {
         setSelectedAssetKey(null);
         setAssets([]);
         setAnalyses(new Map());
-        setFilterUsed('all');
+        setFilterUsed('disk');
         setGameData(null);
       }
       setLoading(true);
@@ -412,18 +416,8 @@ export default function App() {
       const refs = traceAllReferences(data);
       console.log(`[性能] traceAllReferences: ${(performance.now() - t1).toFixed(0)}ms · ${refs.length} refs`);
 
-      const map = new Map<string, AssetAnalysis>();
-      for (const a of found) {
-        map.set(key(a.category, a.stem), { asset: a, references: [], inDatabase: false, onDisk: true });
-      }
-      for (const ref of refs) {
-        const k = key(ref.category, ref.assetName);
-        const entry = map.get(k);
-        if (entry) {
-          entry.references.push(ref);
-          entry.inDatabase = true;
-        }
-      }
+      const { allAssets, analyses: map } = buildAnalyses(found, refs);
+      setAssets(allAssets);
       setAnalyses(map);
 
       console.group('[诊断] 项目加载');
@@ -432,10 +426,14 @@ export default function App() {
         const sampleChars = data.database.actors?.slice(0, 5).map(a => ({ id: a.id, characterName: a.characterName, faceName: a.faceName, matchDisk: stems.has(a.characterName?.toLowerCase() ?? '') }));
         console.log('Actress 样本:', sampleChars);
       }
-      const unmatchedRefs = refs.filter(r => !map.has(key(r.category, r.assetName)));
-      if (unmatchedRefs.length > 0) {
-        console.groupCollapsed(`${unmatchedRefs.length} 个引用未匹配到磁盘`);
-        for (const r of unmatchedRefs.slice(0, 20)) console.log(`  [${r.category}] "${r.assetName}" @`, r.location);
+      const missingCount = Array.from(map.values()).filter(e => !e.onDisk).length;
+      const unusedCount = Array.from(map.values()).filter(e => e.onDisk && !e.inDatabase).length;
+      console.log(`磁盘=${found.length} 引用=${refs.length} 缺失=${missingCount} 未使用=${unusedCount}`);
+      if (missingCount > 0) {
+        console.groupCollapsed(`${missingCount} 个缺失素材`);
+        for (const e of Array.from(map.values()).filter(e => !e.onDisk).slice(0, 20)) {
+          console.log(`  [${e.asset.category}] "${e.asset.stem}" refs=${e.references.length}`);
+        }
         console.groupEnd();
       }
       console.groupEnd();
@@ -466,7 +464,7 @@ export default function App() {
     setAssets([]);
     setAnalyses(new Map());
     setSelectedAssetKey(null);
-    setFilterUsed('all');
+    setFilterUsed('disk');
   }
 
   async function handleEncodingChange(enc: string) {
@@ -479,19 +477,9 @@ export default function App() {
 
       // 重跑引用追踪
       const refs = traceAllReferences(newData);
-      const key = (cat: string, stem: string) => `${cat}/${stem.toLowerCase()}`;
-      const map = new Map<string, AssetAnalysis>();
-      for (const a of assets) {
-        map.set(key(a.category, a.stem), { asset: a, references: [], inDatabase: false, onDisk: true });
-      }
-      for (const ref of refs) {
-        const k = key(ref.category, ref.assetName);
-        const entry = map.get(k);
-        if (entry) {
-          entry.references.push(ref);
-          entry.inDatabase = true;
-        }
-      }
+      const diskOnly = assets.filter(a => a.handle !== undefined);
+      const { allAssets, analyses: map } = buildAnalyses(diskOnly, refs);
+      setAssets(allAssets);
       setAnalyses(map);
 
       console.log(`[ENCODE SWITCH] → ${enc}, refs=${refs.length}`);
@@ -505,9 +493,17 @@ export default function App() {
   const filteredAssets = useMemo(() => assets.filter(a => {
     if (a.category !== activeCategory) return false;
     const entry = analyses.get(`${a.category}/${a.stem.toLowerCase()}`);
-    if (filterUsed === 'used') return entry?.inDatabase;
-    if (filterUsed === 'unused') return !entry?.inDatabase;
-    return true;
+    if (!entry) return filterUsed === 'all';
+    const onDisk = entry.onDisk;
+    const inDb = entry.inDatabase;
+    switch (filterUsed) {
+      case 'disk':    return onDisk;
+      case 'refs':    return inDb;
+      case 'used':    return onDisk && inDb;
+      case 'unused':  return onDisk && !inDb;
+      case 'missing': return !onDisk && inDb;
+      default:        return true;
+    }
   }), [assets, activeCategory, filterUsed, analyses]);
 
   const selectedAsset = selectedAssetKey ? analyses.get(selectedAssetKey)?.asset ?? null : null;
@@ -587,23 +583,13 @@ export default function App() {
 
       // 重跑引用分析
       const refs = traceAllReferences(gameData);
-      const key = (cat: string, stem: string) => `${cat}/${stem.toLowerCase()}`;
-      const map = new Map<string, AssetAnalysis>();
-      for (const a of newAssets) {
-        map.set(key(a.category, a.stem), { asset: a, references: [], inDatabase: false, onDisk: true });
-      }
-      for (const ref of refs) {
-        const k = key(ref.category, ref.assetName);
-        const entry = map.get(k);
-        if (entry) {
-          entry.references.push(ref);
-          entry.inDatabase = true;
-        }
-      }
+      const diskOnly = newAssets.filter(a => a.handle !== undefined);
+      const { allAssets, analyses: map } = buildAnalyses(diskOnly, refs);
+      setAssets(allAssets);
       setAnalyses(map);
 
       // 选中新 key
-      const newKey = key(newAsset.category, newAsset.stem);
+      const newKey = assetKey(newAsset.category, newAsset.stem);
       setSelectedAssetKey(newKey);
     } catch (e) {
       alert('重命名出错：' + (e as Error).message);
@@ -654,33 +640,15 @@ export default function App() {
         : gameData;
 
       const found = await scanProjectAssets(gameData.rootHandle);
-      const key = (cat: string, stem: string) => `${cat}/${stem.toLowerCase()}`;
-      const map = new Map<string, AssetAnalysis>();
-
+      let refs: AssetReference[];
       if (hasDbChange) {
-        const refs = traceAllReferences(newData);
-        for (const a of found) {
-          map.set(key(a.category, a.stem), { asset: a, references: [], inDatabase: false, onDisk: true });
-        }
-        for (const ref of refs) {
-          const k = key(ref.category, ref.assetName);
-          const entry = map.get(k);
-          if (entry) { entry.references.push(ref); entry.inDatabase = true; }
-        }
+        refs = traceAllReferences(newData);
       } else {
-        for (const a of found) {
-          const old = analyses.get(key(a.category, a.stem));
-          map.set(key(a.category, a.stem), {
-            asset: a,
-            references: old?.references ?? [],
-            inDatabase: old?.inDatabase ?? false,
-            onDisk: true,
-          });
-        }
+        refs = Array.from(analyses.values()).flatMap(e => e.references);
       }
-
+      const { allAssets, analyses: map } = buildAnalyses(found, refs);
       setGameData(newData);
-      setAssets(found);
+      setAssets(allAssets);
       setAnalyses(map);
       setSelectedAssetKey(null);
 
@@ -702,31 +670,22 @@ export default function App() {
     const toDelete = Array.from(selectedKeys).map(k => analyses.get(k)?.asset).filter(Boolean) as typeof assets;
     if (toDelete.length === 0) return;
 
-    const usedOnes = toDelete.filter(a => {
-      const entry = analyses.get(`${a.category}/${a.stem.toLowerCase()}`);
-      return entry?.inDatabase;
-    });
+    const missingOnes = toDelete.filter(a => a.handle === undefined);
+    const diskOnes = toDelete.filter(a => a.handle !== undefined);
 
-    if (usedOnes.length > 0) {
-      const names = usedOnes.slice(0, 10).map(a => `  · ${a.category}/${a.name}`).join('\n');
-      const more = usedOnes.length > 10 ? `\n  ... 还有 ${usedOnes.length - 10} 个` : '';
-      const ok = confirm(
-        `其中 ${usedOnes.length} 个素材仍被引用！\n` +
-        `删除它们会自动清除数据库/地图中的引用。\n\n` +
-        `将被删除的已使用素材：\n${names}${more}\n\n` +
-        `确定继续？（操作前会自动创建快照）`
-      );
-      if (!ok) return;
-    } else {
-      const ok = confirm(`确定删除选中的 ${toDelete.length} 个未使用素材？\n操作前会自动创建快照。`);
-      if (!ok) return;
-    }
+    let msg = `确定删除选中的 ${toDelete.length} 个素材？`;
+    if (diskOnes.length > 0) msg += `\n· ${diskOnes.length} 个磁盘文件将被永久删除`;
+    if (missingOnes.length > 0) msg += `\n· ${missingOnes.length} 个缺失素材的引用将被清除`;
+    msg += `\n\n操作前会自动创建快照。`;
+    const ok = confirm(msg);
+    if (!ok) return;
 
     setDeleting(true);
     setLoading(true);
     try {
-      const result = await deleteAssets(gameData, toDelete, true);
-      if (!result.success && !result.filesDeleted.length) {
+      const needClearRefs = missingOnes.length > 0;
+      const result = await deleteAssets(gameData, toDelete, needClearRefs);
+      if (!result.success && !result.filesDeleted.length && result.filesWritten.length === 0) {
         alert('删除失败：' + result.message);
         return;
       }
@@ -741,36 +700,10 @@ export default function App() {
       const newAssets = assets.filter(a => !deletedSet.has(a.path));
       setAssets(newAssets);
 
-      const deletedKeys = new Set(
-        toDelete.map(a => `${a.category}/${a.stem.toLowerCase()}`)
-      );
-
-      const keyOf = (cat: string, stem: string) => `${cat}/${stem.toLowerCase()}`;
-      const newAnalyses = new Map<string, AssetAnalysis>();
-
-      if (result.filesWritten.length > 0) {
-        const refs = traceAllReferences(gameData);
-        const refMap = new Map<string, AssetReference[]>();
-        for (const ref of refs) {
-          const k = keyOf(ref.category, ref.assetName);
-          let arr = refMap.get(k);
-          if (!arr) { arr = []; refMap.set(k, arr); }
-          arr.push(ref);
-        }
-        for (const a of newAssets) {
-          const k = keyOf(a.category, a.stem);
-          const refsForAsset = refMap.get(k) ?? [];
-          newAnalyses.set(k, { asset: a, references: refsForAsset, inDatabase: refsForAsset.length > 0, onDisk: true });
-        }
-      } else {
-        for (const [k, entry] of analyses) {
-          if (deletedKeys.has(k)) continue;
-          const freshAsset = newAssets.find(a =>
-            a.category === entry.asset.category && a.stem.toLowerCase() === entry.asset.stem.toLowerCase()
-          );
-          newAnalyses.set(k, { ...entry, asset: freshAsset ?? entry.asset });
-        }
-      }
+      const diskOnly = newAssets.filter(a => a.handle !== undefined);
+      const refs = traceAllReferences(gameData);
+      const { allAssets, analyses: newAnalyses } = buildAnalyses(diskOnly, refs);
+      setAssets(allAssets);
       setAnalyses(newAnalyses);
 
       setSelectedKeys(new Set());
@@ -959,7 +892,7 @@ export default function App() {
             <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--color-border)', background: 'var(--color-bg-elev)' }}>
               <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                 <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>筛选</span>
-                {(['all','used','unused'] as const).map(f => (
+                {(['all','disk','refs','used','unused','missing'] as const).map(f => (
                   <button key={f} onClick={() => { setFilterUsed(f); setSelectedKeys(new Set()); }} disabled={!gameData} style={{
                     padding: '4px 12px', border: '1px solid var(--color-border)',
                     background: filterUsed === f ? 'var(--color-text)' : 'var(--color-bg-elev)',
@@ -969,7 +902,7 @@ export default function App() {
                     opacity: gameData ? 1 : 0.5,
                     transition: 'all 0.15s',
                   }}>
-                    {f === 'all' ? '全部' : f === 'used' ? '已使用' : '未使用'}
+                    {{ all:'全部', disk:'素材库', refs:'数据库', used:'已使用', unused:'未使用', missing:'缺失' }[f]}
                   </button>
                 ))}
                 <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--color-text-muted)' }}>
@@ -1045,6 +978,7 @@ export default function App() {
                     const isBatchSel = selectedKeys.has(k);
                     const inBatchMode = selectedKeys.size > 0;
                     const isXyz = a.ext === '.xyz';
+                    const isMissing = a.handle === undefined;
 
                     function handleCardClick(e: React.MouseEvent) {
                       if (e.shiftKey || inBatchMode) {
@@ -1064,7 +998,7 @@ export default function App() {
                         style={{
                           listStyle: 'none',
                           border: isBatchSel ? '2px solid var(--color-danger)' : isSel ? '2px solid var(--color-primary)' : '1px solid var(--color-border)',
-                          background: isBatchSel ? 'var(--color-danger-soft)' : isSel ? 'var(--color-primary-soft)' : 'var(--color-bg-elev)',
+                          background: isBatchSel ? 'var(--color-danger-soft)' : isSel ? 'var(--color-primary-soft)' : isMissing ? 'var(--color-bg-warning-soft, #fffbeb)' : 'var(--color-bg-elev)',
                           padding: 10, borderRadius: 6,
                           cursor: 'pointer', transition: 'all 0.12s', height: '100%',
                           boxShadow: isSel ? '0 2px 8px rgba(59,130,246,0.15)' : isBatchSel ? '0 2px 8px rgba(220,38,38,0.12)' : 'none',
@@ -1085,18 +1019,30 @@ export default function App() {
                         }}>
                           {isBatchSel ? '✓' : ''}
                         </div>
-                        <div style={{ fontSize: 12, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 3, color: 'var(--color-text)', paddingRight: 20, minWidth: 0 }}>
-                          {a.name}
+                        <div style={{ fontSize: 12, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 3, color: 'var(--color-text)', paddingRight: 20, minWidth: 0, display: 'flex', gap: 4, alignItems: 'center' }}>
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</span>
+                          {isMissing && (
+                            <span style={{ fontSize: 9, background: 'var(--color-danger)', color: '#fff', padding: '1px 5px', borderRadius: 3, fontWeight: 700, flexShrink: 0 }}>缺失</span>
+                          )}
                         </div>
                         <div style={{ fontSize: 11, display: 'flex', gap: 6, alignItems: 'center', minWidth: 0, overflow: 'hidden' }}>
-                          <span style={{ color: entry?.inDatabase ? 'var(--color-success-text)' : 'var(--color-danger)', fontWeight: 500 }}>
-                            {entry?.inDatabase ? `已使用 ${entry.references.length}` : '未使用'}
-                          </span>
-                          {isXyz && (
+                          {isMissing ? (
+                            <span style={{ color: 'var(--color-warning-text, #d97706)', fontWeight: 500 }}>引用 {entry?.references.length ?? 0} 处</span>
+                          ) : (
+                            <span style={{ color: entry?.inDatabase ? 'var(--color-success-text)' : 'var(--color-danger)', fontWeight: 500 }}>
+                              {entry?.inDatabase ? `已使用 ${entry.references.length}` : '未使用'}
+                            </span>
+                          )}
+                          {!isMissing && isXyz && (
                             <span style={{ fontSize: 9, background: 'var(--color-bg-warning)', color: 'var(--color-warning-text)', padding: '1px 5px', borderRadius: 3, fontWeight: 600 }}>XYZ</span>
                           )}
                         </div>
-                        <div style={{ fontSize: 10, color: 'var(--color-text-muted)', marginTop: 2 }}>{(a.size/1024).toFixed(1)} KB</div>
+                        {!isMissing && (
+                          <div style={{ fontSize: 10, color: 'var(--color-text-muted)', marginTop: 2 }}>{(a.size/1024).toFixed(1)} KB</div>
+                        )}
+                        {isMissing && (
+                          <div style={{ fontSize: 10, color: 'var(--color-danger)', marginTop: 2 }}>文件不存在</div>
+                        )}
                       </div>
                     );
                   }}

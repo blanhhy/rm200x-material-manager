@@ -117,12 +117,19 @@ export default function AssetDetail({
           </>
         )}
       </div>
-      <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
-        {asset.category} · {(asset.size/1024).toFixed(1)} KB
-        {asset.width && asset.height ? ` · ${asset.width}×${asset.height}` : ''}
-        <br />
-        <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{asset.path}</span>
-      </div>
+      {!analysis.onDisk && (
+        <div style={{ fontSize: 12, color: 'var(--color-danger)', marginBottom: 12 }}>
+          {asset.category} · 文件不存在
+        </div>
+      )}
+      {analysis.onDisk && (
+        <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
+          {asset.category} · {(asset.size/1024).toFixed(1)} KB
+          {asset.width && asset.height ? ` · ${asset.width}×${asset.height}` : ''}
+          <br />
+          <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{asset.path}</span>
+        </div>
+      )}
       <h5 style={{ margin: '8px 0 4px', fontSize: 13 }}>
         数据库引用 ({analysis.references.length})
       </h5>
