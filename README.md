@@ -12,6 +12,7 @@ npm run dev
 
 也提供了 [在线示例](https://blanhhy.github.io/rm200x-material-manager/)
 
-## Acknowledge
+## Credits
 
 [EasyRPG](https://easyrpg.org/)
+[rpgrt](https://github.com/johannschopplich/rpgrt)
