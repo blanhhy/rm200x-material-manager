@@ -289,7 +289,22 @@ export function lookupRTPFileInfo(
 
 // ── Built-in bundle URL ─────────────────────────────────────────────
 
-/** Get bundle URL for built-in RTP image preview */
+/** Default extension for builtin RTP files by category */
+export const CATEGORY_RTP_EXT: Partial<Record<AssetCategory, string>> = {
+  Music: '.mid',
+  Sound: '.wav',
+  Movie: '.avi',
+};
+
+/** Stems in the Music directory that are actually .wav files (SE sounds bundled with Music) */
+const MUSIC_WAV_STEMS = new Set([
+  'clock', 'earthquake', 'rain1', 'rain2', 'sea',
+  'seclock', 'seearthquake', 'serain', 'serain2', 'sesea',
+  'se-alarm', 'se-bird', 'se-clock', 'se-crowd', 'se-gale',
+  'se-jungle', 'se-ocean', 'se-quake', 'se-rain', 'se-torrent',
+]);
+
+/** Get bundle URL for built-in RTP asset */
 export function getRtpBundleUrl(
   dbName: string,
   category: AssetCategory,
@@ -300,7 +315,12 @@ export function getRtpBundleUrl(
   // Look up English name in builtin file set
   const enStem = lookupRTPInFileSet(dbName, category, engine, getBuiltinFileSet(engine));
   if (!enStem) return null;
-  return `${import.meta.env.BASE_URL}rtp/${engine}/${rtpTableDir}/${enStem}.png`;
+  // Always use lowercase stem to match rtp-files.json canonical names
+  const stem = enStem.toLowerCase();
+  const ext = (category === 'Music' && MUSIC_WAV_STEMS.has(stem))
+    ? '.wav'
+    : CATEGORY_RTP_EXT[category] ?? '.png';
+  return `${import.meta.env.BASE_URL}rtp/${engine}/${rtpTableDir}/${stem}${ext}`;
 }
 
 // ── Disk RTP scanning ───────────────────────────────────────────────

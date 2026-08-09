@@ -244,7 +244,7 @@ export default function AssetPreview({
     return () => { cancelled = true; };
   }, [asset, useTransparency, analysis?.inRtp, engine, previewRev, activeRtpSourceId]);
 
-  // ── RTP audio/video loading (disk source) ─────────────────────────
+  // ── RTP audio/video loading ──────────────────────────────────────
   const [rtpMediaUrl, setRtpMediaUrl] = useState<string | null>(null);
 
   useEffect(() => {
@@ -252,31 +252,38 @@ export default function AssetPreview({
     if (!asset || asset.handle !== undefined) return;
     if (!AUDIO_CATS.includes(asset.category) && !VIDEO_CATS.includes(asset.category)) return;
     if (!analysis?.inRtp || !engine) return;
-    if (getActiveRtpKind() !== 'disk') return;
     if (!isRTPAvailable(asset.name, asset.category, engine)) return;
 
-    const info = lookupRTPFileInfo(asset.name, asset.category, engine);
-    if (!info) return;
-    const diskHandle = getActiveRtpDiskHandle();
-    if (!diskHandle) return;
-    const actualDir = resolveRtpDirName(info.rtpDir);
-    if (!actualDir) return;
-
+    const srcKind = getActiveRtpKind();
     let cancelled = false;
+
     (async () => {
       try {
-        const subDir = await diskHandle.getDirectoryHandle(actualDir);
-        let fileHandle: FileSystemFileHandle | null = null;
-        const exts = AUDIO_CATS.includes(asset.category)
-          ? ['.wav', '.mp3', '.ogg', '.mid', '.midi']
-          : ['.avi', '.mpg', '.mpeg'];
-        for (const ext of exts) {
-          try { fileHandle = await subDir.getFileHandle(info.fileName + ext); break; } catch {}
+        if (srcKind === 'builtin') {
+          const bundleUrl = getRtpBundleUrl(asset.name, asset.category, engine);
+          if (!bundleUrl) return;
+          if (cancelled) return;
+          setRtpMediaUrl(bundleUrl);
+        } else if (srcKind === 'disk') {
+          const info = lookupRTPFileInfo(asset.name, asset.category, engine);
+          if (!info) return;
+          const diskHandle = getActiveRtpDiskHandle();
+          if (!diskHandle) return;
+          const actualDir = resolveRtpDirName(info.rtpDir);
+          if (!actualDir) return;
+          const subDir = await diskHandle.getDirectoryHandle(actualDir);
+          let fileHandle: FileSystemFileHandle | null = null;
+          const exts = AUDIO_CATS.includes(asset.category)
+            ? ['.wav', '.mp3', '.ogg', '.mid', '.midi']
+            : ['.avi', '.mpg', '.mpeg'];
+          for (const ext of exts) {
+            try { fileHandle = await subDir.getFileHandle(info.fileName + ext); break; } catch {}
+          }
+          if (!fileHandle || cancelled) return;
+          const file = await fileHandle.getFile();
+          if (cancelled) return;
+          setRtpMediaUrl(URL.createObjectURL(file));
         }
-        if (!fileHandle) return;
-        const file = await fileHandle.getFile();
-        if (cancelled) return;
-        setRtpMediaUrl(URL.createObjectURL(file));
       } catch { /* file not found or read error */ }
     })();
 
@@ -391,7 +398,7 @@ export default function AssetPreview({
           </div>
         );
       }
-      // Still loading or builtin (no audio) → fallback to "不含此素材"
+      // Still loading → fallback to placeholder
       return (
         <div style={{ padding: 12 }}>
           <div style={{ background: 'var(--color-bg-subtle)', border: '1px dashed var(--color-border-strong)', borderRadius: 6, padding: 40, textAlign: 'center', color: 'var(--color-text-muted)' }}>

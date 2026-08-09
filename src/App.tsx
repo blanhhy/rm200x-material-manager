@@ -12,7 +12,7 @@ import AssetPreview from './components/AssetPreview';
 import AssetDetail from './components/AssetDetail';
 import VirtualGrid from './components/VirtualGrid';
 import type { AssetReference } from './types/index';
-import { initBuiltinRtp, scanDiskRtpFileSet, initDiskRtp, activateDiskRtp, getRtpBundleUrl, lookupRTPFileInfo, resolveRtpDirName, getActiveRtpKind, getActiveRtpDiskHandle } from './core/rtpIndex';
+import { initBuiltinRtp, scanDiskRtpFileSet, initDiskRtp, activateDiskRtp, getRtpBundleUrl, lookupRTPFileInfo, resolveRtpDirName, getActiveRtpKind, getActiveRtpDiskHandle, CATEGORY_RTP_EXT } from './core/rtpIndex';
 
 const CORE_CATEGORIES = [
   'ChipSet','CharSet','FaceSet',
@@ -309,7 +309,7 @@ function RtpSelector() {
             }}
           >
             内置RTP<br />
-            <span style={{ fontSize: 10, color: 'var(--color-text-muted)' }}>仅包含图片素材</span>
+            <span style={{ fontSize: 10, color: 'var(--color-text-muted)' }}>预置图片与音频素材</span>
           </button>
 
           {/* Disk sources */}
@@ -917,7 +917,9 @@ export default function App() {
       }
 
       try {
-        const newFileName = asset.name; // Use DB reference name, keep original extension
+        // Determine extension from category for non-image types (DB refs lack extensions)
+        const ext = CATEGORY_RTP_EXT[asset.category] ?? asset.ext ?? '.png';
+        const newFileName = asset.stem + ext;
         const fh = await dirHandle.getFileHandle(newFileName, { create: true });
         const w = await fh.createWritable();
         await w.write(blob);
