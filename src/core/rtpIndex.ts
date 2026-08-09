@@ -88,7 +88,10 @@ function buildBuiltinFileSet(engine: EngineVersion): RtpFileSet {
   const fs = new Map<string, Set<string>>();
   if (cats) {
     for (const [k, fileList] of Object.entries(cats)) {
-      fs.set(k.toLowerCase(), new Set(fileList.map(f => f.toLowerCase())));
+      const lowerK = k.toLowerCase();
+      // Production build excludes audio — don't claim availability
+      if (import.meta.env.PROD && (lowerK === 'music' || lowerK === 'sound')) continue;
+      fs.set(lowerK, new Set(fileList.map(f => f.toLowerCase())));
     }
   }
   return fs;
