@@ -1,4 +1,4 @@
-import { DIR_TO_CATEGORY, CATEGORY_EXTS } from './assetTypes';
+import { ASSET_DIRECTORIES, CATEGORY_EXTS } from './assetTypes';
 import type { AssetCategory, AssetFile } from '../types/index';
 import { parsePNG } from '../preview/pngPalette';
 
@@ -15,8 +15,8 @@ export async function scanProjectAssets(root: FileSystemDirectoryHandle): Promis
   type Collected = { dir: string; category: AssetCategory; fileHandle: FileSystemFileHandle; name: string; ext: string; stem: string };
   const collected: Collected[] = [];
 
-  for (const [dirNameLower, category] of Object.entries(DIR_TO_CATEGORY)) {
-    const dirHandle = await root.getDirectoryHandle(dirNameLower).catch(() => null);
+  for (const dirName of ASSET_DIRECTORIES) {
+    const dirHandle = await root.getDirectoryHandle(dirName).catch(() => null);
     if (!dirHandle) continue;
     for await (const entry of dirHandle.values()) {
       if (entry.kind !== 'file') continue;
@@ -25,10 +25,10 @@ export async function scanProjectAssets(root: FileSystemDirectoryHandle): Promis
       const dot = name.lastIndexOf('.');
       if (dot < 0) continue;
       const ext = name.slice(dot).toLowerCase();
-      if (!CATEGORY_EXTS[category].includes(ext)) continue;
+      if (!CATEGORY_EXTS[dirName].includes(ext)) continue;
       collected.push({
-        dir: dirNameLower,
-        category,
+        dir: dirName,
+        category: dirName,
         fileHandle,
         name,
         stem: name.slice(0, dot),

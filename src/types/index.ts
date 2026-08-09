@@ -1,25 +1,24 @@
-// AssetCategory 严格对应 RM2k/2k3 标准磁盘目录（来自 EasyRPG Editor defines.h）
-// 每个文件夹就是独立类别，不做合并
+// RPG Maker 200x 素材类别，每类对应一个文件夹
 export type AssetCategory =
-  | 'ChipSet'
-  | 'CharSet'
-  | 'FaceSet'
-  | 'Backdrop'       // 战斗背景图（terrain.backgroundName 当 type=0, cmd ChangeBattleBG, MapTree.battleBG, system.battletestBackground）
-  | 'Battle'         // 战斗动画帧（DB animations[].animationName → 优先 Battle2，fallback Battle）
-  | 'Battle2'        // 战斗动画帧 v2（同上）
-  | 'BattleCharSet'  // 战斗角色精灵（actor/pose 的 battlerName）
-  | 'BattleWeapon'   // 战斗武器精灵（battlerAnimation.weapon[].weaponName）
-  | 'Monster'        // 敌人精灵（enemy.battlerName）
-  | 'Panorama'       // 远景图（terrain.backgroundName 当 type=1, terrain.backgroundA/BName, map.parallaxName, cmd ChangeParallax）
-  | 'Picture'        // Picture/（ShowPicture, MapInfo.backgroundName）
-  | 'System'         // System/（system.systemName 等）
-  | 'System2'        // System2/
-  | 'Title'          // Title/（system.titleName）
-  | 'GameOver'       // GameOver/（system.gameoverName）
-  | 'Frame'          // Frame/（system.frameName）
-  | 'Music'          // Music/（所有音乐：BGM/BGS/ME 在 RM2K3 里不分目录）
-  | 'Sound'          // Sound/（所有音效）
-  | 'Movie';         // Movie/
+  | 'ChipSet'        // 地图芯片集
+  | 'CharSet'        // 角色集
+  | 'FaceSet'        // 角色脸图集
+  | 'Backdrop'       // 战斗背景图
+  | 'Battle'         // 战斗动画帧
+  | 'Battle2'        // 2k3特有的战斗动画帧 v2
+  | 'BattleCharSet'  // 2k3特有的战斗角色精灵
+  | 'BattleWeapon'   // 2k3特有的战斗武器精灵
+  | 'Monster'        // 敌人立绘
+  | 'Panorama'       // 地图远景
+  | 'Picture'        // 由命令自由显示的图片素材
+  | 'System'         // 系统贴图（控制主题样式）
+  | 'System2'        // 2k3特有的增补系统贴图
+  | 'Title'          // 开始画面图像
+  | 'GameOver'       // 游戏结束图像
+  | 'Frame'          // 2k3特有的游戏边框贴图
+  | 'Music'          // BGM（会循环播放的长音频）
+  | 'Sound'          // 音效（只播放一次的短音频）
+  | 'Movie';         // 由命令自由播放的视频素材
 
 export interface AssetFile {
   name: string;

@@ -266,6 +266,20 @@ export async function listSnapshots(root: FileSystemDirectoryHandle): Promise<Sn
   return result;
 }
 
+export async function deleteSnapshot(
+  root: FileSystemDirectoryHandle,
+  snap: SnapshotInfo,
+): Promise<boolean> {
+  const backupRoot = await root.getDirectoryHandle(BACKUP_DIR).catch(() => null);
+  if (!backupRoot) return false;
+  try {
+    await backupRoot.removeEntry(snap.dirName, { recursive: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function restoreSnapshot(
   root: FileSystemDirectoryHandle,
   snap: SnapshotInfo,

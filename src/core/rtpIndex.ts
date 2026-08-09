@@ -1,5 +1,6 @@
 import iconv from 'iconv-lite';
 import type { AssetCategory, EngineVersion } from '../types/index';
+import { getPrimaryExt } from '../scanner/assetTypes';
 import mappingData from './rtp-data/rtp-mapping.json';
 import rtpFilesData from './rtp-data/rtp-files.json';
 
@@ -292,12 +293,6 @@ export function lookupRTPFileInfo(
 
 // ── Built-in bundle URL ─────────────────────────────────────────────
 
-/** Default extension for builtin RTP files by category */
-export const CATEGORY_RTP_EXT: Partial<Record<AssetCategory, string>> = {
-  Music: '.mid',
-  Sound: '.wav',
-};
-
 /** Stems in the Music directory that are actually .wav files (SE sounds bundled with Music) */
 const MUSIC_WAV_STEMS = new Set([
   'clock', 'earthquake', 'rain1', 'rain2', 'sea',
@@ -321,7 +316,7 @@ export function getRtpBundleUrl(
   const stem = enStem.toLowerCase();
   const ext = (category === 'Music' && MUSIC_WAV_STEMS.has(stem))
     ? '.wav'
-    : CATEGORY_RTP_EXT[category] ?? '.png';
+    : getPrimaryExt(category);
   return `${import.meta.env.BASE_URL}rtp/${engine}/${rtpTableDir}/${stem}${ext}`;
 }
 

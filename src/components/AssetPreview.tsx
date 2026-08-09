@@ -3,6 +3,7 @@ import { useStore } from '../store/useStore';
 import type { AssetCategory, AssetFile, AssetAnalysis, EngineVersion } from '../types/index';
 import { parsePNGPalette0, replaceColorWithTransparency, swapPalette0WithRGB, parsePNG } from '../preview/pngPalette';
 import { getRtpBundleUrl, isRTPAvailable, getActiveRtpKind, getActiveRtpDiskHandle, lookupRTPFileInfo, resolveRtpDirName } from '../core/rtpIndex';
+import { CATEGORY_EXTS } from '../scanner/assetTypes';
 import TransparentColorPicker from './TransparentColorPicker';
 
 const IMAGE_CATS: AssetCategory[] = [
@@ -191,7 +192,7 @@ export default function AssetPreview({
             const subDir = await diskHandle.getDirectoryHandle(actualDir);
             // Try common extensions
             let fileHandle: FileSystemFileHandle | null = null;
-            for (const ext of ['.png', '.bmp', '.xyz']) {
+            for (const ext of CATEGORY_EXTS[asset.category]) {
               try { fileHandle = await subDir.getFileHandle(info.fileName + ext); break; } catch {}
             }
             if (!fileHandle || cancelled) { setLoading(false); return; }
@@ -272,10 +273,7 @@ export default function AssetPreview({
           if (!actualDir) return;
           const subDir = await diskHandle.getDirectoryHandle(actualDir);
           let fileHandle: FileSystemFileHandle | null = null;
-          const exts = AUDIO_CATS.includes(asset.category)
-            ? ['.wav', '.mp3', '.ogg', '.mid', '.midi']
-            : ['.avi', '.mpg', '.mpeg'];
-          for (const ext of exts) {
+          for (const ext of CATEGORY_EXTS[asset.category]) {
             try { fileHandle = await subDir.getFileHandle(info.fileName + ext); break; } catch {}
           }
           if (!fileHandle || cancelled) return;

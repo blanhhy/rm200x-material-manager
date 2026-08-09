@@ -6,13 +6,14 @@ import { traceAllReferences } from './core/referenceTracker';
 import { buildAnalyses } from './core/assetAnalyzer';
 import { renameAsset } from './core/renameEngine';
 import { deleteAssets } from './core/deleteEngine';
-import { restoreSnapshot } from './core/snapshot';
+import { restoreSnapshot, deleteSnapshot } from './core/snapshot';
 import type { SnapshotInfo } from './core/snapshot';
 import AssetPreview from './components/AssetPreview';
 import AssetDetail from './components/AssetDetail';
 import VirtualGrid from './components/VirtualGrid';
 import type { AssetReference } from './types/index';
-import { initBuiltinRtp, scanDiskRtpFileSet, initDiskRtp, activateDiskRtp, getRtpBundleUrl, lookupRTPFileInfo, resolveRtpDirName, getActiveRtpKind, getActiveRtpDiskHandle, CATEGORY_RTP_EXT } from './core/rtpIndex';
+import { initBuiltinRtp, scanDiskRtpFileSet, initDiskRtp, activateDiskRtp, getRtpBundleUrl, lookupRTPFileInfo, resolveRtpDirName, getActiveRtpKind, getActiveRtpDiskHandle } from './core/rtpIndex';
+import { CATEGORY_EXTS, getPrimaryExt } from './scanner/assetTypes';
 
 const CORE_CATEGORIES = [
   'ChipSet','CharSet','FaceSet',
@@ -101,7 +102,7 @@ function WorkspaceSelector({
           flex: 1, textAlign: 'left',
         }}>
           {gameData
-            ? (projectName || dirName || '未命名项目')
+            ? (dirName || '未命名项目')
             : '打开项目'}
         </span>
         <span style={{ color: 'var(--color-text-muted)', fontSize: 11 }}>▾</span>
@@ -127,12 +128,25 @@ function WorkspaceSelector({
           ) : gameData ? (
             <>
               <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--color-bg-hover)', marginBottom: 4 }}>
-                <div style={{ fontSize: 14, fontWeight: 600, color: iniStatus === 'missing' ? 'var(--color-warning-text)' : 'var(--color-text)', marginBottom: 4, wordBreak: 'break-all' }}>
-                  {projectName || (iniStatus === 'missing' ? 'INI 读取被拒绝' : '未设置 GameTitle')}
-                </div>
-                <div style={{ fontSize: 11, color: 'var(--color-text-muted)', fontFamily: 'monospace', wordBreak: 'break-all' }}>
-                  {dirName}
-                </div>
+                {projectName ? (
+                  <>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text)', marginBottom: 4, wordBreak: 'break-all' }}>
+                      {projectName}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--color-text-muted)', fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                      {dirName}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text)', marginBottom: 4, wordBreak: 'break-all' }}>
+                      {dirName}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--color-warning-text)', wordBreak: 'break-all' }}>
+                      {iniStatus === 'missing' ? '⚠ INI 读取被拒绝' : '⚠ 未设置 GameTitle'}
+                    </div>
+                  </>
+                )}
               </div>
 
               <div style={{
@@ -735,7 +749,7 @@ export default function App() {
     selectedAssetKey, setSelectedAssetKey,
     loading, setLoading,
     setError,
-    tasks, clearCompletedTasks,
+    tasks, clearCompletedTasks, addTask, updateTask,
     snapshots, refreshSnapshots,
     setActiveRtpSourceId,
   } = useStore();
@@ -930,16 +944,29 @@ export default function App() {
       .filter(a => a.inRtp && !a.onDisk && catSet.has(a.asset.category));
     if (toInject.length === 0) { alert('所选类别中没有可注入的 RTP 素材'); return; }
 
+    // Close batch modal immediately, run as background task
+    setBatchAction(null);
+
+    const taskId = addTask({
+      label: `注入 RTP 素材 (0/${toInject.length})`,
+      progress: 0,
+      status: 'running',
+    });
+
     let ok = 0;
     const missing: string[] = [];
+    const total = toInject.length;
 
-    for (const analysis of toInject) {
+    for (let i = 0; i < toInject.length; i++) {
+      const analysis = toInject[i];
       const asset = analysis.asset;
-      // Determine the disk directory for this category
       const dirName = asset.path.split('/')[0];
       let dirHandle: FileSystemDirectoryHandle;
       try { dirHandle = await root.getDirectoryHandle(dirName); }
-      catch { try { dirHandle = await root.getDirectoryHandle(dirName, { create: true }); } catch { continue; } }
+      catch { try { dirHandle = await root.getDirectoryHandle(dirName, { create: true }); } catch {
+        missing.push(`${asset.category}/${asset.name}: 无法创建目录`);
+        continue;
+      }}
 
       let blob: Blob | null = null;
       const rtpKind = getActiveRtpKind();
@@ -961,7 +988,7 @@ export default function App() {
             if (diskHandle) {
               try {
                 const subDir = await diskHandle.getDirectoryHandle(actualDir);
-                for (const ext of ['.png', '.bmp', '.wav', '.mp3', '.ogg', '.mid', '.midi', '.avi', '.mpg', '.mpeg']) {
+                for (const ext of CATEGORY_EXTS[asset.category]) {
                   try {
                     const fh = await subDir.getFileHandle(info.fileName + ext);
                     blob = await fh.getFile();
@@ -976,12 +1003,16 @@ export default function App() {
 
       if (!blob) {
         missing.push(`${asset.category}/${asset.name}`);
+        updateTask(taskId, {
+          progress: Math.round(((i + 1) / total) * 100),
+          label: `注入 RTP 素材 (${i + 1}/${total})`,
+          message: missing.length > 0 ? `${missing.length} 个未找到` : undefined,
+        });
         continue;
       }
 
       try {
-        // Determine extension from category for non-image types (DB refs lack extensions)
-        const ext = CATEGORY_RTP_EXT[asset.category] ?? asset.ext ?? '.png';
+        const ext = asset.ext || getPrimaryExt(asset.category);
         const newFileName = asset.stem + ext;
         const fh = await dirHandle.getFileHandle(newFileName, { create: true });
         const w = await fh.createWritable();
@@ -991,21 +1022,38 @@ export default function App() {
       } catch (e) {
         missing.push(`${asset.category}/${asset.name}: ${(e as Error).message}`);
       }
+
+      updateTask(taskId, {
+        progress: Math.round(((i + 1) / total) * 100),
+        label: `注入 RTP 素材 (${i + 1}/${total})`,
+        message: missing.length > 0 ? `${missing.length} 个未找到` : undefined,
+      });
     }
 
     // Refresh asset list and analyses
-    const found = await scanProjectAssets(root);
-    const refs = traceAllReferences(gameData!);
-    const { allAssets, analyses: newMap } = buildAnalyses(found, refs, gameData!.engine);
-    setAssets(allAssets);
-    setAnalyses(newMap);
-    setBatchAction(null);
-
-    let msg = `已注入 ${ok}/${toInject.length} 个素材`;
-    if (missing.length > 0) {
-      msg += `\n\n${missing.length} 个素材在当前 RTP 中未找到：\n${missing.slice(0, 10).join('\n')}${missing.length > 10 ? `\n...等 ${missing.length - 10} 个` : ''}`;
+    try {
+      const found = await scanProjectAssets(root);
+      const refs = traceAllReferences(gameData!);
+      const { allAssets, analyses: newMap } = buildAnalyses(found, refs, gameData!.engine);
+      setAssets(allAssets);
+      setAnalyses(newMap);
+    } catch (e) {
+      updateTask(taskId, {
+        status: 'error',
+        label: `RTP 注入失败`,
+        message: (e as Error).message,
+        progress: 100,
+      });
+      return;
     }
-    alert(msg);
+
+    const msg = `已注入 ${ok}/${total} 个素材${missing.length > 0 ? `，${missing.length} 个未找到` : ''}`;
+    updateTask(taskId, {
+      status: missing.length > 0 ? 'error' : 'success',
+      label: msg,
+      progress: 100,
+      message: missing.length > 0 ? missing.slice(0, 5).join(', ') + (missing.length > 5 ? `...等 ${missing.length} 个` : '') : undefined,
+    });
   }
 
   async function handleCleanUnused(cats: string[]) {
@@ -1214,6 +1262,19 @@ export default function App() {
     }
   }
 
+  async function handleDeleteSnapshot(snap: SnapshotInfo, e: React.MouseEvent) {
+    e.stopPropagation(); // don't trigger restore
+    if (!gameData) return;
+    const ok = confirm(`删除此快照？\n\n${snap.label || snap.dirName}\n\n快照删除后无法恢复。`);
+    if (!ok) return;
+    const success = await deleteSnapshot(gameData.rootHandle, snap);
+    if (success) {
+      await refreshSnapshots(gameData.rootHandle);
+    } else {
+      alert('删除快照失败');
+    }
+  }
+
   async function handleDeleteSelected() {
     if (!gameData || selectedKeys.size === 0) return;
 
@@ -1336,24 +1397,47 @@ export default function App() {
                   </div>
                 ) : (
                   snapshots.map(s => (
-                    <button
+                    <div
                       key={s.dirName}
-                      onClick={() => handleRestoreSnapshot(s)}
                       style={{
-                        display: 'block', width: '100%', textAlign: 'left',
-                        padding: '8px 10px', border: 'none', background: 'transparent',
-                        cursor: 'pointer', borderRadius: 4,
+                        display: 'flex', alignItems: 'center',
+                        borderRadius: 4,
                       }}
-                      onMouseEnter={e => ((e.target as HTMLElement).style.background = 'var(--color-bg-hover)')}
-                      onMouseLeave={e => ((e.target as HTMLElement).style.background = 'transparent')}
+                      onMouseEnter={e => ((e.currentTarget as HTMLElement).style.background = 'var(--color-bg-hover)')}
+                      onMouseLeave={e => ((e.currentTarget as HTMLElement).style.background = 'transparent')}
                     >
-                      <div style={{ fontSize: 13, color: 'var(--color-text)', fontWeight: 500 }}>
-                        {s.label || s.dirName}
-                      </div>
-                      <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 2 }}>
-                        {formatTime(s.timestamp)} · {s.files.length + (s.deletedFiles?.length ?? 0)} 个文件
-                      </div>
-                    </button>
+                      <button
+                        onClick={() => handleRestoreSnapshot(s)}
+                        style={{
+                          flex: 1, textAlign: 'left',
+                          padding: '8px 10px', border: 'none', background: 'transparent',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <div style={{ fontSize: 13, color: 'var(--color-text)', fontWeight: 500 }}>
+                          {s.label || s.dirName}
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 2 }}>
+                          {formatTime(s.timestamp)} · {s.files.length + (s.deletedFiles?.length ?? 0)} 个文件
+                        </div>
+                      </button>
+                      <button
+                        onClick={(e) => handleDeleteSnapshot(s, e)}
+                        title="删除快照"
+                        style={{
+                          width: 28, height: 28,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          background: 'transparent', border: 'none',
+                          color: 'var(--color-text-muted)', fontSize: 14,
+                          cursor: 'pointer', borderRadius: 4,
+                          flexShrink: 0, marginRight: 4,
+                        }}
+                        onMouseEnter={e => ((e.target as HTMLElement).style.color = '#ff6b6b')}
+                        onMouseLeave={e => ((e.target as HTMLElement).style.color = 'var(--color-text-muted)')}
+                      >
+                        ×
+                      </button>
+                    </div>
                   ))
                 )}
               </div>

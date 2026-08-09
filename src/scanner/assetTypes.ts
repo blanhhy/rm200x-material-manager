@@ -1,52 +1,29 @@
 import type { AssetCategory } from '../types/index';
 
-// 严格对应 RM2k/2k3 标准磁盘目录（来自 EasyRPG Editor defines.h）
-// 一对一映射，每个文件夹独立成 category
-export const DIR_TO_CATEGORY: Record<string, AssetCategory> = {
-  chipset:       'ChipSet',
-  charset:       'CharSet',
-  faceset:       'FaceSet',
-  backdrop:      'Backdrop',
-  battle:        'Battle',
-  battle2:       'Battle2',
-  battlecharset: 'BattleCharSet',
-  battleweapon:  'BattleWeapon',
-  monster:       'Monster',
-  panorama:      'Panorama',
-  picture:       'Picture',
-  system:        'System',
-  system2:       'System2',
-  title:         'Title',
-  gameover:      'GameOver',
-  frame:         'Frame',
-  music:         'Music',
-  sound:         'Sound',
-  movie:         'Movie',
-};
+// RM2k/2k3 standard disk directories (from EasyRPG Editor defines.h)
+export const ASSET_DIRECTORIES = [
+  'Backdrop',
+  'Battle',
+  'Battle2',
+  'BattleCharSet',
+  'BattleWeapon',
+  'CharSet',
+  'ChipSet',
+  'FaceSet',
+  'Frame',
+  'GameOver',
+  'Monster',
+  'Movie',
+  'Music',
+  'Panorama',
+  'Picture',
+  'Sound',
+  'System',
+  'System2',
+  'Title',
+] as const satisfies ReadonlyArray<AssetCategory>;
 
-// 反查表：category → 磁盘目录列表（通常只有一个）
-export const CATEGORY_DIRS: Record<AssetCategory, string[]> = {
-  ChipSet:      ['chipset'],
-  CharSet:      ['charset'],
-  FaceSet:      ['faceset'],
-  Backdrop:     ['backdrop'],
-  Battle:       ['battle'],
-  Battle2:      ['battle2'],
-  BattleCharSet: ['battlecharset'],
-  BattleWeapon:  ['battleweapon'],
-  Monster:      ['monster'],
-  Panorama:     ['panorama'],
-  Picture:      ['picture'],
-  System:       ['system'],
-  System2:      ['system2'],
-  Title:        ['title'],
-  GameOver:     ['gameover'],
-  Frame:        ['frame'],
-  Music:        ['music'],
-  Sound:        ['sound'],
-  Movie:        ['movie'],
-};
-
+// 受支持的素材文件扩展名（唯一权威来源）
 export const CATEGORY_EXTS: Record<AssetCategory, string[]> = {
   ChipSet:      ['.png', '.bmp', '.xyz'],
   CharSet:      ['.png', '.bmp', '.xyz'],
@@ -64,11 +41,16 @@ export const CATEGORY_EXTS: Record<AssetCategory, string[]> = {
   Title:        ['.png', '.bmp', '.xyz'],
   GameOver:     ['.png', '.bmp', '.xyz'],
   Frame:        ['.png', '.bmp', '.xyz'],
-  Music:        ['.mid', '.midi', '.wav', '.ogg'],
-  Sound:        ['.wav', '.ogg'],
-  Movie:        ['.avi', '.mpg'],
+  Music:        ['.mid', '.midi', '.wav', '.ogg', '.mp3'],
+  Sound:        ['.wav', '.ogg', '.mp3'],
+  Movie:        ['.avi', '.mpg', '.mpeg'],
 };
 
 export function matchesCategory(ext: string, category: AssetCategory): boolean {
   return CATEGORY_EXTS[category].includes(ext.toLowerCase());
+}
+
+/** 取类别的首选扩展名（列表第一项） */
+export function getPrimaryExt(category: AssetCategory): string {
+  return CATEGORY_EXTS[category][0];
 }
