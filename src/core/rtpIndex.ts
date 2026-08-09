@@ -41,8 +41,10 @@ type RowEntry = { rowIdx: number; row: MappingRow };
 
 // ── Name variant encoding ───────────────────────────────────────────
 
-function addKey(idx: Record<string, RowEntry>, key: string, entry: RowEntry) {
-  if (!idx[key.toLowerCase()]) idx[key.toLowerCase()] = entry;
+function addKey(idx: Record<string, RowEntry[]>, key: string, entry: RowEntry) {
+  const k = key.toLowerCase();
+  if (!idx[k]) idx[k] = [];
+  idx[k].push(entry);
 }
 
 function encodeVariants(name: string): string[] {
@@ -56,8 +58,8 @@ function encodeVariants(name: string): string[] {
 
 // ── Build mapping index (language-agnostic) ─────────────────────────
 
-function buildRowIndex(rows: MappingRow[]): Record<string, Record<string, RowEntry>> {
-  const idx: Record<string, Record<string, RowEntry>> = {};
+function buildRowIndex(rows: MappingRow[]): Record<string, Record<string, RowEntry[]>> {
+  const idx: Record<string, Record<string, RowEntry[]>> = {};
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     const dir = row[0];
@@ -77,8 +79,6 @@ function buildRowIndex(rows: MappingRow[]): Record<string, Record<string, RowEnt
 
 const ROWS_2K = buildRowIndex(mapping.tables['2k'].rows);
 const ROWS_2K3 = buildRowIndex(mapping.tables['2k3'].rows);
-const ALL_RTP_DIRS_2K = Object.keys(ROWS_2K);
-const ALL_RTP_DIRS_2K3 = Object.keys(ROWS_2K3);
 
 // ── Built-in file sets ──────────────────────────────────────────────
 
@@ -107,23 +107,21 @@ function lookupInMapping(
   dbName: string,
   engine: EngineVersion,
   preferredRtpDir?: string,
-): RowEntry | null {
-  if (!dbName) return null;
-  const rowsByName = engine === '2k3' ? ROWS_2K3 : ROWS_2K;
+): RowEntry[] {
+  if (!dbName || !preferredRtpDir) return [];
   const key = dbName.toLowerCase();
 
-  if (preferredRtpDir) {
-    const entry = rowsByName[preferredRtpDir]?.[key];
-    if (entry) return entry;
+  const results: RowEntry[] = [];
+  // Search current engine first, then the other (cross-engine RTP compat)
+  const engines: EngineVersion[] = engine === '2k3' ? ['2k3', '2k'] : ['2k', '2k3'];
+
+  for (const eng of engines) {
+    const rowsByName = eng === '2k3' ? ROWS_2K3 : ROWS_2K;
+    const entries = rowsByName[preferredRtpDir]?.[key];
+    if (entries) for (const e of entries) if (!results.some(r => r.rowIdx === e.rowIdx && r.row === e.row)) results.push(e);
   }
 
-  const allDirs = engine === '2k3' ? ALL_RTP_DIRS_2K3 : ALL_RTP_DIRS_2K;
-  for (const dir of allDirs) {
-    if (dir === preferredRtpDir) continue;
-    const entry = rowsByName[dir]?.[key];
-    if (entry) return entry;
-  }
-  return null;
+  return results;
 }
 
 /** Check if dbName is a known RTP asset name (any language, mapping-only, no file check) */
@@ -134,7 +132,7 @@ export function isRTPAsset(
 ): boolean {
   if (!dbName) return false;
   const rtpTableDir = CATEGORY_TO_RTP_DIR[category];
-  return lookupInMapping(dbName, engine, rtpTableDir) !== null;
+  return lookupInMapping(dbName, engine, rtpTableDir).length > 0;
 }
 
 // ── FileSet helpers ─────────────────────────────────────────────────
@@ -144,10 +142,19 @@ function matchRowInFileSet(entry: RowEntry, fileSet: RtpFileSet): string | null 
   const dirFiles = fileSet.get(dir.toLowerCase());
   if (!dirFiles) return null;
   // Iterate columns: try English first (col 2 = index 2 in most tables), then others
-  const colOrder = [2, 1, 3, 4]; // en → ja → donMiguel → addon
+  const colOrder = [2, 1, 3, 4, 5, 6, 7]; // en → ja → donMiguel → addon → ko → zh
   for (const col of colOrder) {
     const name = entry.row[col];
     if (name && dirFiles.has(name.toLowerCase())) return name;
+  }
+  return null;
+}
+
+/** Try all mapping entries against the fileSet, return first match */
+function matchEntriesInFileSet(entries: RowEntry[], fileSet: RtpFileSet): string | null {
+  for (const entry of entries) {
+    const name = matchRowInFileSet(entry, fileSet);
+    if (name) return name;
   }
   return null;
 }
@@ -182,7 +189,7 @@ function lookupRTPDirectMatch(
 }
 
 /** Check if the asset is available in the given RTP file set */
-export function isRTPInFileSet(
+function isRTPInFileSet(
   dbName: string,
   category: AssetCategory,
   engine: EngineVersion,
@@ -190,16 +197,16 @@ export function isRTPInFileSet(
 ): boolean {
   if (!dbName) return false;
   const rtpTableDir = CATEGORY_TO_RTP_DIR[category];
-  const entry = lookupInMapping(dbName, engine, rtpTableDir);
-  if (entry) {
-    return matchRowInFileSet(entry, fileSet) !== null;
+  const entries = lookupInMapping(dbName, engine, rtpTableDir);
+  if (entries.length > 0) {
+    return matchEntriesInFileSet(entries, fileSet) !== null;
   }
   // Fallback: direct filename match (for standard tracks not in mapping)
   return isRTPDirectMatch(dbName, category, fileSet);
 }
 
 /** Get the best matching filename for the asset in the given file set */
-export function lookupRTPInFileSet(
+function lookupRTPInFileSet(
   dbName: string,
   category: AssetCategory,
   engine: EngineVersion,
@@ -207,9 +214,9 @@ export function lookupRTPInFileSet(
 ): string | null {
   if (!dbName) return null;
   const rtpTableDir = CATEGORY_TO_RTP_DIR[category];
-  const entry = lookupInMapping(dbName, engine, rtpTableDir);
-  if (entry) {
-    const mapped = matchRowInFileSet(entry, fileSet);
+  const entries = lookupInMapping(dbName, engine, rtpTableDir);
+  if (entries.length > 0) {
+    const mapped = matchEntriesInFileSet(entries, fileSet);
     if (mapped) return mapped;
   }
   return lookupRTPDirectMatch(dbName, category, fileSet);
@@ -227,13 +234,8 @@ type ActiveRtpSource = {
 
 let activeSource: ActiveRtpSource = null;
 
-export function setActiveRtpSource(source: ActiveRtpSource): void {
-  activeSource = source;
-}
-
-export function getActiveRtpFileSet(): RtpFileSet | null {
-  return activeSource?.fileSet ?? null;
-}
+/** Registry of disk RTP sources by ID, for switching between them */
+const diskSourceRegistry = new Map<string, { fileSet: RtpFileSet; diskHandle: FileSystemDirectoryHandle; dirNames: Map<string, string> }>();
 
 export function getActiveRtpKind(): 'builtin' | 'disk' | null {
   return activeSource?.kind ?? null;
@@ -272,18 +274,17 @@ export function lookupRTPFileInfo(
   engine: EngineVersion,
 ): { rtpDir: string; fileName: string } | null {
   if (!activeSource) return null;
+  const name = lookupRTPInFileSet(dbName, category, engine, activeSource.fileSet);
+  if (!name) return null;
+  // Determine which rtpDir this match came from
   const rtpTableDir = CATEGORY_TO_RTP_DIR[category];
-  const entry = lookupInMapping(dbName, engine, rtpTableDir);
-  if (entry) {
-    const name = matchRowInFileSet(entry, activeSource.fileSet);
-    if (name) return { rtpDir: entry.row[0], fileName: name };
+  const entries = lookupInMapping(dbName, engine, rtpTableDir);
+  if (entries.length > 0) {
+    // Check if the match came from mapping (returns mapping dir) or direct (returns category dir)
+    const mapped = matchEntriesInFileSet(entries, activeSource.fileSet);
+    if (mapped === name) return { rtpDir: entries[0].row[0], fileName: name };
   }
-  // Fallback: direct filename match
-  const directName = lookupRTPDirectMatch(dbName, category, activeSource.fileSet);
-  if (directName) {
-    return { rtpDir: CATEGORY_TO_RTP_DIR[category], fileName: directName };
-  }
-  return null;
+  return { rtpDir: rtpTableDir, fileName: name };
 }
 
 // ── Built-in bundle URL ─────────────────────────────────────────────
@@ -347,13 +348,15 @@ export function lookupRTPAlternative(
   engine: EngineVersion,
 ): string | null {
   const rtpTableDir = CATEGORY_TO_RTP_DIR[category];
-  const entry = lookupInMapping(dbName, engine, rtpTableDir);
-  if (!entry) return null;
-  // Try English first
-  for (let col = 2; col < entry.row.length; col++) {
-    if (entry.row[col]) return entry.row[col];
+  const entries = lookupInMapping(dbName, engine, rtpTableDir);
+  if (entries.length === 0) return null;
+  // Try English first across all entries
+  for (const entry of entries) {
+    for (let col = 2; col < entry.row.length; col++) {
+      if (entry.row[col]) return entry.row[col];
+    }
   }
-  return entry.row[1] ?? null;
+  return entries[0].row[1] ?? null;
 }
 
 /** Initialize builtin RTP as the active source */
@@ -366,9 +369,25 @@ export function initBuiltinRtp(engine: EngineVersion): void {
 
 /** Initialize disk RTP as the active source */
 export function initDiskRtp(
+  id: string,
   fileSet: RtpFileSet,
   diskHandle: FileSystemDirectoryHandle,
   dirNames: Map<string, string>,
 ): void {
+  const entry = { fileSet, diskHandle, dirNames };
+  diskSourceRegistry.set(id, entry);
   activeSource = { fileSet, kind: 'disk', diskHandle, dirNames };
+}
+
+/** Switch to a previously registered disk RTP source */
+export function activateDiskRtp(id: string): boolean {
+  const entry = diskSourceRegistry.get(id);
+  if (!entry) return false;
+  activeSource = {
+    fileSet: entry.fileSet,
+    kind: 'disk',
+    diskHandle: entry.diskHandle,
+    dirNames: entry.dirNames,
+  };
+  return true;
 }

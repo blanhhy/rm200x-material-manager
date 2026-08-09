@@ -12,7 +12,7 @@ import AssetPreview from './components/AssetPreview';
 import AssetDetail from './components/AssetDetail';
 import VirtualGrid from './components/VirtualGrid';
 import type { AssetReference } from './types/index';
-import { initBuiltinRtp, scanDiskRtpFileSet, initDiskRtp } from './core/rtpIndex';
+import { initBuiltinRtp, scanDiskRtpFileSet, initDiskRtp, activateDiskRtp } from './core/rtpIndex';
 
 const CORE_CATEGORIES = [
   'ChipSet','CharSet','FaceSet',
@@ -249,7 +249,7 @@ function RtpSelector() {
       let totalFiles = 0;
       for (const files of fileSet.values()) totalFiles += files.size;
       const stats = `${fileSet.size} 个子目录 · ${totalFiles} 个文件`;
-      initDiskRtp(fileSet, handle, dirNames);
+      initDiskRtp(id, fileSet, handle, dirNames);
       setDiskSources(prev => [...prev, { id, label, stats }]);
       setActiveRtpSourceId(id);
       setMenuOpen(false);
@@ -262,6 +262,9 @@ function RtpSelector() {
   function handleSelect(id: string) {
     if (id === 'builtin' && gameData) {
       initBuiltinRtp(gameData.engine);
+    } else if (id !== 'builtin') {
+      // Disk source — activate from registry
+      if (!activateDiskRtp(id)) return; // source not found (shouldn't happen)
     }
     setActiveRtpSourceId(id);
     setMenuOpen(false);
