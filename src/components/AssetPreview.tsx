@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { useStore } from '../store/useStore';
 import type { AssetCategory, AssetFile, AssetAnalysis, EngineVersion } from '../types/index';
 import { parsePNGPalette0, replaceColorWithTransparency, swapPalette0WithRGB, parsePNG } from '../preview/pngPalette';
-import { getRtpBundleUrl, isRTPAvailable, getActiveRtpKind, getActiveRtpDiskHandle, lookupRTPFileInfo } from '../core/rtpIndex';
+import { getRtpBundleUrl, isRTPAvailable, getActiveRtpKind, getActiveRtpDiskHandle, lookupRTPFileInfo, resolveRtpDirName } from '../core/rtpIndex';
 import TransparentColorPicker from './TransparentColorPicker';
 
 const IMAGE_CATS: AssetCategory[] = [
@@ -186,8 +186,10 @@ export default function AssetPreview({
           if (!diskHandle) { setLoading(false); return; }
           const info = lookupRTPFileInfo(asset.name, asset.category, engine);
           if (!info) { setLoading(false); return; }
+          const actualDir = resolveRtpDirName(info.rtpDir);
+          if (!actualDir) { setLoading(false); return; }
           try {
-            const subDir = await diskHandle.getDirectoryHandle(info.rtpDir);
+            const subDir = await diskHandle.getDirectoryHandle(actualDir);
             // Try common extensions
             let fileHandle: FileSystemFileHandle | null = null;
             for (const ext of ['.png', '.bmp', '.xyz']) {
@@ -257,11 +259,13 @@ export default function AssetPreview({
     if (!info) return;
     const diskHandle = getActiveRtpDiskHandle();
     if (!diskHandle) return;
+    const actualDir = resolveRtpDirName(info.rtpDir);
+    if (!actualDir) return;
 
     let cancelled = false;
     (async () => {
       try {
-        const subDir = await diskHandle.getDirectoryHandle(info.rtpDir);
+        const subDir = await diskHandle.getDirectoryHandle(actualDir);
         let fileHandle: FileSystemFileHandle | null = null;
         const exts = AUDIO_CATS.includes(asset.category)
           ? ['.wav', '.mp3', '.ogg', '.mid', '.midi']

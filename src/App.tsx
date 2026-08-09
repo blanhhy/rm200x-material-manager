@@ -233,24 +233,23 @@ function RtpSelector() {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  if (!gameData) return null;
-
-  const currentLabel = activeRtpSourceId === 'builtin' ? (gameData.engine === '2k3' ? '2003' : '2000') : diskSources.find(s => s.id === activeRtpSourceId)?.label ?? '未选择';
+  const currentLabel = activeRtpSourceId === 'builtin' ? '内置RTP' : diskSources.find(s => s.id === activeRtpSourceId)?.label ?? '未选择';
 
   async function handleAddDiskRtp() {
     try {
       const handle = await window.showDirectoryPicker({ mode: 'read' });
-      const fileSet = await scanDiskRtpFileSet(handle);
-      if (!fileSet) {
+      const result = await scanDiskRtpFileSet(handle);
+      if (!result) {
         alert('所选目录不包含任何有效的 RTP 素材子目录（如 Backdrop、ChipSet、Music 等）。');
         return;
       }
+      const { fileSet, dirNames } = result;
       const id = `disk_${Date.now()}`;
       const label = handle.name;
       let totalFiles = 0;
       for (const files of fileSet.values()) totalFiles += files.size;
       const stats = `${fileSet.size} 个子目录 · ${totalFiles} 个文件`;
-      initDiskRtp(fileSet, handle);
+      initDiskRtp(fileSet, handle, dirNames);
       setDiskSources(prev => [...prev, { id, label, stats }]);
       setActiveRtpSourceId(id);
       setMenuOpen(false);
@@ -263,8 +262,6 @@ function RtpSelector() {
   function handleSelect(id: string) {
     if (id === 'builtin' && gameData) {
       initBuiltinRtp(gameData.engine);
-    } else {
-      // disk source — already registered, just switch
     }
     setActiveRtpSourceId(id);
     setMenuOpen(false);
@@ -282,6 +279,7 @@ function RtpSelector() {
           borderRadius: 6, cursor: 'pointer',
           color: 'var(--color-text)',
           whiteSpace: 'nowrap',
+          opacity: gameData ? 1 : 0.5,
         }}
         title="选择 RTP 素材来源"
       >
@@ -308,8 +306,8 @@ function RtpSelector() {
               color: activeRtpSourceId === 'builtin' ? 'var(--color-primary-text)' : 'var(--color-text)',
             }}
           >
-            {gameData.engine === '2k3' ? '2003' : '2000'}<br />
-            <span style={{ fontSize: 10, color: 'var(--color-text-muted)' }}>内置RTP</span>
+            内置RTP<br />
+            <span style={{ fontSize: 10, color: 'var(--color-text-muted)' }}>仅包含图片素材</span>
           </button>
 
           {/* Disk sources */}
@@ -341,7 +339,7 @@ function RtpSelector() {
               color: 'var(--color-primary-text)',
             }}
           >
-            + 添加 RTP 目录...
+            + 添加本地 RTP 目录...
           </button>
         </div>
       )}
@@ -896,7 +894,7 @@ export default function App() {
           mapCount={mapCount}
           onEncodingChange={handleEncodingChange}
         />
-        {gameData && <RtpSelector />}
+        <RtpSelector />
         {gameData && (
           <div ref={snapMenuRef} style={{ position: 'relative' }}>
             <button

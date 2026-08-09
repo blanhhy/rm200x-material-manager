@@ -152,6 +152,35 @@ function matchRowInFileSet(entry: RowEntry, fileSet: RtpFileSet): string | null 
   return null;
 }
 
+/** Check if the asset directly matches a file in the fileSet (no mapping) */
+function isRTPDirectMatch(
+  dbName: string,
+  category: AssetCategory,
+  fileSet: RtpFileSet,
+): boolean {
+  if (!dbName) return false;
+  const rtpDir = CATEGORY_TO_RTP_DIR[category];
+  if (!rtpDir) return false;
+  const dirFiles = fileSet.get(rtpDir.toLowerCase());
+  if (!dirFiles) return false;
+  return dirFiles.has(dbName.toLowerCase());
+}
+
+/** Find direct filename match in fileSet */
+function lookupRTPDirectMatch(
+  dbName: string,
+  category: AssetCategory,
+  fileSet: RtpFileSet,
+): string | null {
+  if (!dbName) return null;
+  const rtpDir = CATEGORY_TO_RTP_DIR[category];
+  if (!rtpDir) return null;
+  const dirFiles = fileSet.get(rtpDir.toLowerCase());
+  if (!dirFiles) return null;
+  const key = dbName.toLowerCase();
+  return dirFiles.has(key) ? dbName : null;
+}
+
 /** Check if the asset is available in the given RTP file set */
 export function isRTPInFileSet(
   dbName: string,
@@ -162,8 +191,11 @@ export function isRTPInFileSet(
   if (!dbName) return false;
   const rtpTableDir = CATEGORY_TO_RTP_DIR[category];
   const entry = lookupInMapping(dbName, engine, rtpTableDir);
-  if (!entry) return false;
-  return matchRowInFileSet(entry, fileSet) !== null;
+  if (entry) {
+    return matchRowInFileSet(entry, fileSet) !== null;
+  }
+  // Fallback: direct filename match (for standard tracks not in mapping)
+  return isRTPDirectMatch(dbName, category, fileSet);
 }
 
 /** Get the best matching filename for the asset in the given file set */
@@ -176,8 +208,11 @@ export function lookupRTPInFileSet(
   if (!dbName) return null;
   const rtpTableDir = CATEGORY_TO_RTP_DIR[category];
   const entry = lookupInMapping(dbName, engine, rtpTableDir);
-  if (!entry) return null;
-  return matchRowInFileSet(entry, fileSet);
+  if (entry) {
+    const mapped = matchRowInFileSet(entry, fileSet);
+    if (mapped) return mapped;
+  }
+  return lookupRTPDirectMatch(dbName, category, fileSet);
 }
 
 // ── Active source management (module-level) ─────────────────────────
@@ -186,6 +221,8 @@ type ActiveRtpSource = {
   fileSet: RtpFileSet;
   kind: 'builtin' | 'disk';
   diskHandle?: FileSystemDirectoryHandle;
+  /** lowercase rtpDir → actual disk directory name */
+  dirNames?: Map<string, string>;
 } | null;
 
 let activeSource: ActiveRtpSource = null;
@@ -237,10 +274,16 @@ export function lookupRTPFileInfo(
   if (!activeSource) return null;
   const rtpTableDir = CATEGORY_TO_RTP_DIR[category];
   const entry = lookupInMapping(dbName, engine, rtpTableDir);
-  if (!entry) return null;
-  const name = matchRowInFileSet(entry, activeSource.fileSet);
-  if (!name) return null;
-  return { rtpDir: entry.row[0], fileName: name };
+  if (entry) {
+    const name = matchRowInFileSet(entry, activeSource.fileSet);
+    if (name) return { rtpDir: entry.row[0], fileName: name };
+  }
+  // Fallback: direct filename match
+  const directName = lookupRTPDirectMatch(dbName, category, activeSource.fileSet);
+  if (directName) {
+    return { rtpDir: CATEGORY_TO_RTP_DIR[category], fileName: directName };
+  }
+  return null;
 }
 
 // ── Built-in bundle URL ─────────────────────────────────────────────
@@ -267,11 +310,17 @@ const KNOWN_RTP_DIRS = new Set([
   'music', 'panorama', 'picture', 'sound', 'system', 'system2', 'title',
 ]);
 
-/** Scan a disk directory and build an RTP file set. Returns null if no valid RTP subdirs found. */
+/** Get the actual disk directory name for a given rtpDir (lowercase) */
+export function resolveRtpDirName(rtpDir: string): string | null {
+  return activeSource?.dirNames?.get(rtpDir.toLowerCase()) ?? null;
+}
+
+/** Scan a disk directory, returning the fileSet and a dirNames map (lowercase→actual). Returns null if no valid RTP subdirs found. */
 export async function scanDiskRtpFileSet(
   rootHandle: FileSystemDirectoryHandle,
-): Promise<RtpFileSet | null> {
+): Promise<{ fileSet: RtpFileSet; dirNames: Map<string, string> } | null> {
   const fs: RtpFileSet = new Map();
+  const dirNames = new Map<string, string>();
   let foundAny = false;
   for await (const [name, handle] of rootHandle.entries()) {
     if (handle.kind === 'directory' && KNOWN_RTP_DIRS.has(name.toLowerCase())) {
@@ -280,11 +329,13 @@ export async function scanDiskRtpFileSet(
         const stem = fname.replace(/\.[^.]+$/, '').toLowerCase();
         dirFiles.add(stem);
       }
-      fs.set(name.toLowerCase(), dirFiles);
+      const lower = name.toLowerCase();
+      fs.set(lower, dirFiles);
+      dirNames.set(lower, name);
       foundAny = true;
     }
   }
-  return foundAny ? fs : null;
+  return foundAny ? { fileSet: fs, dirNames } : null;
 }
 
 // ── Legacy compat (kept for assetAnalyzer which only checks mapping) ─
@@ -317,6 +368,7 @@ export function initBuiltinRtp(engine: EngineVersion): void {
 export function initDiskRtp(
   fileSet: RtpFileSet,
   diskHandle: FileSystemDirectoryHandle,
+  dirNames: Map<string, string>,
 ): void {
-  activeSource = { fileSet, kind: 'disk', diskHandle };
+  activeSource = { fileSet, kind: 'disk', diskHandle, dirNames };
 }
