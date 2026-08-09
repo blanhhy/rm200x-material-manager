@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { useStore } from '../store/useStore';
 import type { AssetCategory, AssetFile, AssetAnalysis, EngineVersion } from '../types/index';
 import { parsePNGPalette0, replaceColorWithTransparency, swapPalette0WithRGB, parsePNG } from '../preview/pngPalette';
-import { getBundledRtpUrl } from '../core/rtpIndex';
+import { getRtpBundleUrl, isRTPAvailable, getActiveRtpKind, getActiveRtpDiskHandle, lookupRTPFileInfo } from '../core/rtpIndex';
 import TransparentColorPicker from './TransparentColorPicker';
 
 const IMAGE_CATS: AssetCategory[] = [
@@ -47,6 +48,10 @@ export default function AssetPreview({
   const [_, setPalette0] = useState<{ r: number; g: number; b: number } | null>(null);
   const [previewRev, setPreviewRev] = useState(0);
 
+  // Subscribe to RTP source changes for re-render
+  const activeRtpSourceId = useStore(s => s.activeRtpSourceId);
+
+  // ── Disk audio/video preview ──────────────────────────────────────
   useEffect(() => {
     setMediaUrl(null);
     setError(null);
@@ -81,6 +86,7 @@ export default function AssetPreview({
     };
   }, [asset]);
 
+  // ── Disk image preview ────────────────────────────────────────────
   useEffect(() => {
     setError(null);
     const canvas = canvasRef.current;
@@ -148,31 +154,61 @@ export default function AssetPreview({
     };
   }, [asset, useTransparency, previewRev]);
 
-  // 内置 RTP 图片预览：当素材不在磁盘但识别为 RTP 时，从内置 RTP 加载
+  // ── RTP image preview (builtin or disk) ───────────────────────────
   useEffect(() => {
     setError(null);
     const canvas = canvasRef.current;
     if (canvas) { canvas.width = 0; canvas.height = 0; }
     if (!asset || asset.handle !== undefined || !IMAGE_CATS.includes(asset.category) || !analysis?.inRtp || !engine) return;
 
-    const rtpUrl = getBundledRtpUrl(asset.name, asset.category, engine);
-    if (!rtpUrl) return;
+    const isAvailable = isRTPAvailable(asset.name, asset.category, engine);
+    if (!isAvailable) {
+      setLoading(false);
+      return;
+    }
 
+    const srcKind = getActiveRtpKind();
     let cancelled = false;
     setLoading(true);
 
     (async () => {
       try {
-        const resp = await fetch(rtpUrl);
-        if (!resp.ok || cancelled) { setLoading(false); return; }
-        const buf = new Uint8Array(await resp.arrayBuffer());
-        if (cancelled) return;
+        let buf: Uint8Array | null = null;
+
+        if (srcKind === 'builtin') {
+          const bundleUrl = getRtpBundleUrl(asset.name, asset.category, engine);
+          if (!bundleUrl || cancelled) { setLoading(false); return; }
+          const resp = await fetch(bundleUrl);
+          if (!resp.ok || cancelled) { setLoading(false); return; }
+          buf = new Uint8Array(await resp.arrayBuffer());
+        } else if (srcKind === 'disk') {
+          const diskHandle = getActiveRtpDiskHandle();
+          if (!diskHandle) { setLoading(false); return; }
+          const info = lookupRTPFileInfo(asset.name, asset.category, engine);
+          if (!info) { setLoading(false); return; }
+          try {
+            const subDir = await diskHandle.getDirectoryHandle(info.rtpDir);
+            // Try common extensions
+            let fileHandle: FileSystemFileHandle | null = null;
+            for (const ext of ['.png', '.bmp', '.xyz']) {
+              try { fileHandle = await subDir.getFileHandle(info.fileName + ext); break; } catch {}
+            }
+            if (!fileHandle || cancelled) { setLoading(false); return; }
+            const file = await fileHandle.getFile();
+            buf = new Uint8Array(await file.arrayBuffer());
+          } catch {
+            setLoading(false);
+            return;
+          }
+        }
+
+        if (cancelled || !buf) { setLoading(false); return; }
         setCurrentPngBytes(buf);
 
         const pal0 = parsePNGPalette0(buf);
         setPalette0(pal0);
 
-        const url = URL.createObjectURL(new Blob([buf]));
+        const url = URL.createObjectURL(new Blob([buf as BlobPart]));
         const img = new Image();
         img.onload = () => {
           if (cancelled) return;
@@ -204,7 +240,44 @@ export default function AssetPreview({
     })();
 
     return () => { cancelled = true; };
-  }, [asset, useTransparency, analysis?.inRtp, engine, previewRev]);
+  }, [asset, useTransparency, analysis?.inRtp, engine, previewRev, activeRtpSourceId]);
+
+  // ── RTP audio/video loading (disk source) ─────────────────────────
+  const [rtpMediaUrl, setRtpMediaUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    setRtpMediaUrl(null);
+    if (!asset || asset.handle !== undefined) return;
+    if (!AUDIO_CATS.includes(asset.category) && !VIDEO_CATS.includes(asset.category)) return;
+    if (!analysis?.inRtp || !engine) return;
+    if (getActiveRtpKind() !== 'disk') return;
+    if (!isRTPAvailable(asset.name, asset.category, engine)) return;
+
+    const info = lookupRTPFileInfo(asset.name, asset.category, engine);
+    if (!info) return;
+    const diskHandle = getActiveRtpDiskHandle();
+    if (!diskHandle) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const subDir = await diskHandle.getDirectoryHandle(info.rtpDir);
+        let fileHandle: FileSystemFileHandle | null = null;
+        const exts = AUDIO_CATS.includes(asset.category)
+          ? ['.wav', '.mp3', '.ogg', '.mid', '.midi']
+          : ['.avi', '.mpg', '.mpeg'];
+        for (const ext of exts) {
+          try { fileHandle = await subDir.getFileHandle(info.fileName + ext); break; } catch {}
+        }
+        if (!fileHandle) return;
+        const file = await fileHandle.getFile();
+        if (cancelled) return;
+        setRtpMediaUrl(URL.createObjectURL(file));
+      } catch { /* file not found or read error */ }
+    })();
+
+    return () => { cancelled = true; };
+  }, [asset, analysis?.inRtp, engine, activeRtpSourceId]);
 
   const handleColorConfirm = useCallback(async (targetRGB: { r: number; g: number; b: number }) => {
     if (!asset || !asset.handle || !currentPngBytes) return;
@@ -242,12 +315,26 @@ export default function AssetPreview({
     return <div style={{ padding: 16, color: 'var(--color-text-muted)', fontStyle: 'italic' }}>选中一个素材查看预览</div>;
   }
 
+  // ── Non-disk assets (RTP or missing) ──────────────────────────────
   if (asset.handle === undefined) {
     const isRtpImage = analysis?.inRtp && IMAGE_CATS.includes(asset.category) && engine;
     const isRtpAudio = analysis?.inRtp && AUDIO_CATS.includes(asset.category);
     const isRtpVideo = analysis?.inRtp && VIDEO_CATS.includes(asset.category);
 
+    // RTP image: check availability in current source
     if (isRtpImage) {
+      const hasFile = isRTPAvailable(asset.name, asset.category, engine);
+      if (!hasFile) {
+        return (
+          <div style={{ padding: 12 }}>
+            <div style={{ background: 'var(--color-bg-subtle)', border: '1px dashed var(--color-border-strong)', borderRadius: 6, padding: 40, textAlign: 'center', color: 'var(--color-text-muted)' }}>
+              <div style={{ fontSize: 40, marginBottom: 12 }}>🧩</div>
+              <div style={{ fontSize: 13, color: 'var(--color-text)', marginBottom: 4 }}>{asset.name}</div>
+              <div style={{ fontSize: 12, color: 'var(--color-warning-text)' }}>当前使用的RTP不含此素材</div>
+            </div>
+          </div>
+        );
+      }
       return (
         <div style={{ padding: 12 }}>
           <div style={{ marginBottom: 8, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -274,18 +361,45 @@ export default function AssetPreview({
       );
     }
 
+    // RTP audio or video
     if (isRtpAudio || isRtpVideo) {
+      const hasFile = engine ? isRTPAvailable(asset.name, asset.category, engine) : false;
+      if (!hasFile) {
+        return (
+          <div style={{ padding: 12 }}>
+            <div style={{ background: 'var(--color-bg-subtle)', border: '1px dashed var(--color-border-strong)', borderRadius: 6, padding: 40, textAlign: 'center', color: 'var(--color-text-muted)' }}>
+              <div style={{ fontSize: 40, marginBottom: 12 }}>🎵</div>
+              <div style={{ fontSize: 13, color: 'var(--color-text)', marginBottom: 4 }}>{asset.name}</div>
+              <div style={{ fontSize: 12, color: 'var(--color-warning-text)' }}>当前使用的RTP不含此素材</div>
+            </div>
+          </div>
+        );
+      }
+      // hasFile is true — either builtin or disk, but builtin never has audio
+      // The effect above loads rtpMediaUrl for disk sources
+      if (rtpMediaUrl) {
+        return (
+          <div style={{ padding: 12 }}>
+            <p style={{ fontSize: 13, color: 'var(--color-text)' }}>{asset.name}</p>
+            {AUDIO_CATS.includes(asset.category)
+              ? <audio controls src={rtpMediaUrl} />
+              : <video controls src={rtpMediaUrl} style={{ maxWidth: '100%' }} />}
+          </div>
+        );
+      }
+      // Still loading or builtin (no audio) → fallback to "不含此素材"
       return (
         <div style={{ padding: 12 }}>
           <div style={{ background: 'var(--color-bg-subtle)', border: '1px dashed var(--color-border-strong)', borderRadius: 6, padding: 40, textAlign: 'center', color: 'var(--color-text-muted)' }}>
             <div style={{ fontSize: 40, marginBottom: 12 }}>🎵</div>
             <div style={{ fontSize: 13, color: 'var(--color-text)', marginBottom: 4 }}>{asset.name}</div>
-            <div style={{ fontSize: 12, color: 'var(--color-warning-text)' }}>暂不支持预览 RTP {isRtpAudio ? '音频' : '视频'}</div>
+            <div style={{ fontSize: 12, color: 'var(--color-warning-text)' }}>当前使用的RTP不含此素材</div>
           </div>
         </div>
       );
     }
 
+    // Missing (not RTP, not on disk)
     return (
       <div style={{ padding: 12 }}>
         <div style={{ background: 'var(--color-bg-subtle)', border: '1px dashed var(--color-border-strong)', borderRadius: 6, padding: 40, textAlign: 'center', color: 'var(--color-text-muted)' }}>

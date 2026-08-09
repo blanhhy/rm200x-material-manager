@@ -12,6 +12,7 @@ import AssetPreview from './components/AssetPreview';
 import AssetDetail from './components/AssetDetail';
 import VirtualGrid from './components/VirtualGrid';
 import type { AssetReference } from './types/index';
+import { initBuiltinRtp, scanDiskRtpFileSet, initDiskRtp } from './core/rtpIndex';
 
 const CORE_CATEGORIES = [
   'ChipSet','CharSet','FaceSet',
@@ -218,6 +219,136 @@ function WorkspaceSelector({
   );
 }
 
+function RtpSelector() {
+  const { gameData, activeRtpSourceId, setActiveRtpSourceId } = useStore();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [diskSources, setDiskSources] = useState<{ id: string; label: string; stats: string }[]>([]);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  if (!gameData) return null;
+
+  const currentLabel = activeRtpSourceId === 'builtin' ? (gameData.engine === '2k3' ? '2003' : '2000') : diskSources.find(s => s.id === activeRtpSourceId)?.label ?? '未选择';
+
+  async function handleAddDiskRtp() {
+    try {
+      const handle = await window.showDirectoryPicker({ mode: 'read' });
+      const fileSet = await scanDiskRtpFileSet(handle);
+      if (!fileSet) {
+        alert('所选目录不包含任何有效的 RTP 素材子目录（如 Backdrop、ChipSet、Music 等）。');
+        return;
+      }
+      const id = `disk_${Date.now()}`;
+      const label = handle.name;
+      let totalFiles = 0;
+      for (const files of fileSet.values()) totalFiles += files.size;
+      const stats = `${fileSet.size} 个子目录 · ${totalFiles} 个文件`;
+      initDiskRtp(fileSet, handle);
+      setDiskSources(prev => [...prev, { id, label, stats }]);
+      setActiveRtpSourceId(id);
+      setMenuOpen(false);
+    } catch (e) {
+      if ((e as Error).message?.includes('aborted')) return;
+      alert('添加 RTP 目录失败：' + (e as Error).message);
+    }
+  }
+
+  function handleSelect(id: string) {
+    if (id === 'builtin' && gameData) {
+      initBuiltinRtp(gameData.engine);
+    } else {
+      // disk source — already registered, just switch
+    }
+    setActiveRtpSourceId(id);
+    setMenuOpen(false);
+  }
+
+  return (
+    <div ref={menuRef} style={{ position: 'relative' }}>
+      <button
+        onClick={() => setMenuOpen(!menuOpen)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          padding: '5px 10px', fontSize: 12,
+          background: 'var(--color-bg-elev)',
+          border: '1px solid var(--color-border)',
+          borderRadius: 6, cursor: 'pointer',
+          color: 'var(--color-text)',
+          whiteSpace: 'nowrap',
+        }}
+        title="选择 RTP 素材来源"
+      >
+        <span style={{ filter: 'grayscale(1)', opacity: 0.6 }}>🧩</span>
+        <span>{currentLabel}</span>
+        <span style={{ color: 'var(--color-text-muted)', fontSize: 10 }}>▾</span>
+      </button>
+
+      {menuOpen && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, marginTop: 4,
+          minWidth: 220, background: 'var(--color-bg-elev)',
+          border: '1px solid var(--color-border)', borderRadius: 8,
+          boxShadow: '0 10px 25px rgba(0,0,0,0.1)', zIndex: 1000,
+          padding: 4,
+        }}>
+          {/* Built-in */}
+          <button
+            onClick={() => handleSelect('builtin')}
+            style={{
+              display: 'block', width: '100%', textAlign: 'left',
+              padding: '8px 10px', border: 'none', background: activeRtpSourceId === 'builtin' ? 'var(--color-primary-soft)' : 'transparent',
+              cursor: 'pointer', borderRadius: 4, fontSize: 12,
+              color: activeRtpSourceId === 'builtin' ? 'var(--color-primary-text)' : 'var(--color-text)',
+            }}
+          >
+            {gameData.engine === '2k3' ? '2003' : '2000'}<br />
+            <span style={{ fontSize: 10, color: 'var(--color-text-muted)' }}>内置RTP</span>
+          </button>
+
+          {/* Disk sources */}
+          {diskSources.map(s => (
+            <button
+              key={s.id}
+              onClick={() => handleSelect(s.id)}
+              style={{
+                display: 'block', width: '100%', textAlign: 'left',
+                padding: '8px 10px', border: 'none', background: activeRtpSourceId === s.id ? 'var(--color-primary-soft)' : 'transparent',
+                cursor: 'pointer', borderRadius: 4, fontSize: 12,
+                color: activeRtpSourceId === s.id ? 'var(--color-primary-text)' : 'var(--color-text)',
+                marginTop: 2,
+              }}
+            >
+              {s.label}<br />
+              <span style={{ fontSize: 10, color: 'var(--color-text-muted)' }}>{s.stats}</span>
+            </button>
+          ))}
+
+          <div style={{ borderTop: '1px solid var(--color-border)', margin: '4px 0' }} />
+
+          <button
+            onClick={handleAddDiskRtp}
+            style={{
+              display: 'block', width: '100%', textAlign: 'left',
+              padding: '8px 10px', border: 'none', background: 'transparent',
+              cursor: 'pointer', borderRadius: 4, fontSize: 12,
+              color: 'var(--color-primary-text)',
+            }}
+          >
+            + 添加 RTP 目录...
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TaskPanel({ tasks, onClearCompleted }: {
   tasks: ReturnType<typeof useStore.getState>['tasks'];
   onClearCompleted: () => void;
@@ -363,6 +494,7 @@ export default function App() {
     setError,
     tasks, clearCompletedTasks,
     snapshots, refreshSnapshots,
+    setActiveRtpSourceId,
   } = useStore();
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -403,6 +535,10 @@ export default function App() {
         data = await reDecodeWithEncoding(data, encoding);
       }
       setGameData(data);
+
+      // Initialize built-in RTP for this engine
+      initBuiltinRtp(data.engine);
+      setActiveRtpSourceId('builtin');
 
       await new Promise(r => requestAnimationFrame(() => setTimeout(r, 16)));
 
@@ -760,6 +896,7 @@ export default function App() {
           mapCount={mapCount}
           onEncodingChange={handleEncodingChange}
         />
+        {gameData && <RtpSelector />}
         {gameData && (
           <div ref={snapMenuRef} style={{ position: 'relative' }}>
             <button

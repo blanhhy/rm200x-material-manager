@@ -32,6 +32,10 @@ interface Store {
   filterUsed: 'all' | 'disk' | 'refs' | 'used' | 'unused' | 'rtp' | 'missing';
   setFilterUsed: (f: 'all' | 'disk' | 'refs' | 'used' | 'unused' | 'rtp' | 'missing') => void;
 
+  // RTP source selection: null = none, "builtin" = built-in, arbitrary string = disk source label
+  activeRtpSourceId: string | null;
+  setActiveRtpSourceId: (id: string | null) => void;
+
   loading: boolean;
   error: string | null;
   setLoading: (v: boolean) => void;
@@ -67,6 +71,8 @@ export const useStore = create<Store>((set, get) => ({
   setSelectedAssetKey: (k) => set({ selectedAssetKey: k }),
   filterUsed: 'disk',
   setFilterUsed: (f) => set({ filterUsed: f }),
+  activeRtpSourceId: 'builtin',
+  setActiveRtpSourceId: (id) => set({ activeRtpSourceId: id }),
   loading: false,
   error: null,
   setLoading: (v) => set({ loading: v }),

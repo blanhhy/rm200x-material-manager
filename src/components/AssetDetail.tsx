@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { AssetAnalysis, EngineVersion } from '../types/index';
-import { lookupRTPAlternative } from '../core/rtpIndex';
+import { lookupRTPAlternative, lookupRTPDisplayName } from '../core/rtpIndex';
 
 const pad4 = (id: number) => String(id).padStart(4, '0');
 
@@ -169,7 +169,7 @@ export default function AssetDetail({
       </div>
       {!analysis.onDisk && (
         <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
-          {asset.category} · {analysis.inRtp ? `RTP::${engine ? (lookupRTPAlternative(asset.name, asset.category, engine) ?? asset.name) : asset.name}` : '文件不存在'}
+          {asset.category} · {analysis.inRtp ? `RTP::${engine ? ((lookupRTPDisplayName(asset.name, asset.category, engine) || lookupRTPAlternative(asset.name, asset.category, engine)) ?? asset.name) : asset.name}` : '文件不存在'}
         </div>
       )}
       {analysis.onDisk && (
