@@ -296,7 +296,6 @@ export function lookupRTPFileInfo(
 export const CATEGORY_RTP_EXT: Partial<Record<AssetCategory, string>> = {
   Music: '.mid',
   Sound: '.wav',
-  Movie: '.avi',
 };
 
 /** Stems in the Music directory that are actually .wav files (SE sounds bundled with Music) */

@@ -529,6 +529,69 @@ function QuickActions({ onAction }: { onAction: (a: BatchAction) => void }) {
   );
 }
 
+// ── Filter dropdown ─────────────────────────────────────────────────
+
+const FILTER_OPTIONS = ['all','disk','refs','used','unused','rtp','missing'] as const;
+
+function FilterDropdown({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: typeof FILTER_OPTIONS[number];
+  onChange: (f: typeof FILTER_OPTIONS[number]) => void;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, []);
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button
+        onClick={() => !disabled && setOpen(!open)}
+        disabled={disabled}
+        style={{
+          padding: '4px 0', fontSize: 12,
+          background: 'transparent', border: 'none',
+          cursor: disabled ? 'not-allowed' : 'pointer',
+          color: 'var(--color-text)',
+          opacity: disabled ? 0.4 : 1,
+          display: 'flex', alignItems: 'center', gap: 2,
+        }}
+      >
+        {FILTER_LABEL[value]}
+        <span style={{ fontSize: 10, color: 'var(--color-text-muted)' }}>▾</span>
+      </button>
+      {open && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, marginTop: 2,
+          minWidth: 100, background: 'var(--color-bg-elev)',
+          border: '1px solid var(--color-border)', borderRadius: 6,
+          boxShadow: '0 6px 16px rgba(0,0,0,0.12)', zIndex: 1000, padding: 4,
+        }}>
+          {FILTER_OPTIONS.map(f => (
+            <button key={f} onClick={() => { setOpen(false); onChange(f); }} style={{
+              display: 'block', width: '100%', textAlign: 'left',
+              padding: '5px 10px', border: 'none',
+              background: value === f ? 'var(--color-primary-soft)' : 'transparent',
+              cursor: 'pointer', borderRadius: 4, fontSize: 12,
+              color: value === f ? 'var(--color-primary-text)' : 'var(--color-text)',
+            }}>
+              {FILTER_LABEL[f]}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TaskPanel({ tasks, onClearCompleted }: {
   tasks: ReturnType<typeof useStore.getState>['tasks'];
   onClearCompleted: () => void;
@@ -1380,20 +1443,12 @@ export default function App() {
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--color-border)', background: 'var(--color-bg-elev)' }}>
               <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-                <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>筛选</span>
-                {(['all','disk','refs','used','unused','rtp','missing'] as const).map(f => (
-                  <button key={f} onClick={() => { setFilterUsed(f); setSelectedKeys(new Set()); }} disabled={!gameData} style={{
-                    padding: '4px 12px', border: '1px solid var(--color-border)',
-                    background: filterUsed === f ? 'var(--color-text)' : 'var(--color-bg-elev)',
-                    color: filterUsed === f ? 'var(--color-text-inverse)' : 'var(--color-text)',
-                    fontSize: 12, borderRadius: 4,
-                    cursor: gameData ? 'pointer' : 'not-allowed',
-                    opacity: gameData ? 1 : 0.5,
-                    transition: 'all 0.15s',
-                  }}>
-                    {FILTER_LABEL[f]}
-                  </button>
-                ))}
+                <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>筛选：</span>
+                <FilterDropdown
+                  value={filterUsed}
+                  onChange={(f) => { setFilterUsed(f); setSelectedKeys(new Set()); }}
+                  disabled={!gameData}
+                />
                 <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--color-text-muted)' }}>
                   {filteredAssets.length} 项
                 </span>
@@ -1530,7 +1585,7 @@ export default function App() {
                           <div style={{ fontSize: 10, color: 'var(--color-text-muted)', marginTop: 2 }}>{(a.size/1024).toFixed(1)} KB</div>
                         )}
                         {isRtp && (
-                          <div style={{ fontSize: 10, color: 'var(--color-warning-text)', marginTop: 2 }}>使用 RTP 素材</div>
+                          <div style={{ fontSize: 10, color: 'var(--color-warning-text)', marginTop: 2 }}>依赖 RTP</div>
                         )}
                         {isMissing && (
                           <div style={{ fontSize: 10, color: 'var(--color-danger)', marginTop: 2 }}>素材缺失</div>

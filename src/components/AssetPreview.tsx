@@ -12,7 +12,6 @@ const IMAGE_CATS: AssetCategory[] = [
   'System','System2','Title','GameOver','Frame',
 ];
 const AUDIO_CATS: AssetCategory[] = ['Music','Sound'];
-const VIDEO_CATS: AssetCategory[] = ['Movie'];
 
 const SPINNER = (
   <div style={{ textAlign: 'center', padding: 24, color: 'var(--color-text-muted)' }}>
@@ -57,7 +56,7 @@ export default function AssetPreview({
     setError(null);
     if (!asset || !asset.handle) return;
 
-    if (!AUDIO_CATS.includes(asset.category) && !VIDEO_CATS.includes(asset.category)) return;
+    if (!AUDIO_CATS.includes(asset.category) && asset.category !== 'Movie') return;
 
     let cancelled = false;
     let urlToRevoke: string | null = null;
@@ -250,7 +249,7 @@ export default function AssetPreview({
   useEffect(() => {
     setRtpMediaUrl(null);
     if (!asset || asset.handle !== undefined) return;
-    if (!AUDIO_CATS.includes(asset.category) && !VIDEO_CATS.includes(asset.category)) return;
+    if (!AUDIO_CATS.includes(asset.category)) return;
     if (!analysis?.inRtp || !engine) return;
     if (!isRTPAvailable(asset.name, asset.category, engine)) return;
 
@@ -330,7 +329,6 @@ export default function AssetPreview({
   if (asset.handle === undefined) {
     const isRtpImage = analysis?.inRtp && IMAGE_CATS.includes(asset.category) && engine;
     const isRtpAudio = analysis?.inRtp && AUDIO_CATS.includes(asset.category);
-    const isRtpVideo = analysis?.inRtp && VIDEO_CATS.includes(asset.category);
 
     // RTP image: check availability in current source
     if (isRtpImage) {
@@ -339,7 +337,6 @@ export default function AssetPreview({
         return (
           <div style={{ padding: 12 }}>
             <div style={{ background: 'var(--color-bg-subtle)', border: '1px dashed var(--color-border-strong)', borderRadius: 6, padding: 40, textAlign: 'center', color: 'var(--color-text-muted)' }}>
-              <div style={{ fontSize: 40, marginBottom: 12 }}>🧩</div>
               <div style={{ fontSize: 13, color: 'var(--color-text)', marginBottom: 4 }}>{asset.name}</div>
               <div style={{ fontSize: 12, color: 'var(--color-warning-text)' }}>当前使用的RTP不含此素材</div>
             </div>
@@ -372,49 +369,34 @@ export default function AssetPreview({
       );
     }
 
-    // RTP audio or video
-    if (isRtpAudio || isRtpVideo) {
+    // RTP audio
+    if (isRtpAudio) {
       const hasFile = engine ? isRTPAvailable(asset.name, asset.category, engine) : false;
       if (!hasFile) {
         return (
           <div style={{ padding: 12 }}>
             <div style={{ background: 'var(--color-bg-subtle)', border: '1px dashed var(--color-border-strong)', borderRadius: 6, padding: 40, textAlign: 'center', color: 'var(--color-text-muted)' }}>
-              <div style={{ fontSize: 40, marginBottom: 12 }}>🎵</div>
               <div style={{ fontSize: 13, color: 'var(--color-text)', marginBottom: 4 }}>{asset.name}</div>
               <div style={{ fontSize: 12, color: 'var(--color-warning-text)' }}>当前使用的RTP不含此素材</div>
             </div>
           </div>
         );
       }
-      // hasFile is true — either builtin or disk, but builtin never has audio
-      // The effect above loads rtpMediaUrl for disk sources
       if (rtpMediaUrl) {
         return (
           <div style={{ padding: 12 }}>
             <p style={{ fontSize: 13, color: 'var(--color-text)' }}>{asset.name}</p>
-            {AUDIO_CATS.includes(asset.category)
-              ? <audio controls src={rtpMediaUrl} />
-              : <video controls src={rtpMediaUrl} style={{ maxWidth: '100%' }} />}
+            <audio controls src={rtpMediaUrl} />
           </div>
         );
       }
-      // Still loading → fallback to placeholder
-      return (
-        <div style={{ padding: 12 }}>
-          <div style={{ background: 'var(--color-bg-subtle)', border: '1px dashed var(--color-border-strong)', borderRadius: 6, padding: 40, textAlign: 'center', color: 'var(--color-text-muted)' }}>
-            <div style={{ fontSize: 40, marginBottom: 12 }}>🎵</div>
-            <div style={{ fontSize: 13, color: 'var(--color-text)', marginBottom: 4 }}>{asset.name}</div>
-            <div style={{ fontSize: 12, color: 'var(--color-warning-text)' }}>当前使用的RTP不含此素材</div>
-          </div>
-        </div>
-      );
+      return SPINNER;
     }
 
     // Missing (not RTP, not on disk)
     return (
       <div style={{ padding: 12 }}>
         <div style={{ background: 'var(--color-bg-subtle)', border: '1px dashed var(--color-border-strong)', borderRadius: 6, padding: 40, textAlign: 'center', color: 'var(--color-text-muted)' }}>
-          <div style={{ fontSize: 40, marginBottom: 12 }}>❓</div>
           <div style={{ fontSize: 13, color: 'var(--color-text)', marginBottom: 4 }}>{asset.name}</div>
           <div style={{ fontSize: 12, color: 'var(--color-danger)' }}>磁盘上未找到此文件</div>
         </div>
@@ -497,7 +479,7 @@ export default function AssetPreview({
     );
   }
 
-  if (VIDEO_CATS.includes(asset.category)) {
+  if (asset.category === 'Movie') {
     return (
       <div style={{ padding: 12 }}>
         <p style={{ fontSize: 13, color: 'var(--color-text)' }}>{asset.name}</p>
