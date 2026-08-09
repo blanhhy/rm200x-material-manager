@@ -12,7 +12,7 @@ import AssetPreview from './components/AssetPreview';
 import AssetDetail from './components/AssetDetail';
 import VirtualGrid from './components/VirtualGrid';
 import type { AssetReference } from './types/index';
-import { initBuiltinRtp, scanDiskRtpFileSet, initDiskRtp, activateDiskRtp } from './core/rtpIndex';
+import { initBuiltinRtp, scanDiskRtpFileSet, initDiskRtp, activateDiskRtp, getRtpBundleUrl, lookupRTPFileInfo, resolveRtpDirName, getActiveRtpKind, getActiveRtpDiskHandle } from './core/rtpIndex';
 
 const CORE_CATEGORIES = [
   'ChipSet','CharSet','FaceSet',
@@ -95,7 +95,7 @@ function WorkspaceSelector({
           maxWidth: 360,
         }}
       >
-        <span style={{ filter: 'grayscale(1)', opacity: 0.8 }}>📁</span>
+        <span style={{ filter: 'grayscale(1)', opacity: 0.6 }}>📁</span>
         <span style={{
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           flex: 1, textAlign: 'left',
@@ -286,7 +286,6 @@ function RtpSelector() {
         }}
         title="选择 RTP 素材来源"
       >
-        <span style={{ filter: 'grayscale(1)', opacity: 0.6 }}>🧩</span>
         <span>{currentLabel}</span>
         <span style={{ color: 'var(--color-text-muted)', fontSize: 10 }}>▾</span>
       </button>
@@ -344,6 +343,186 @@ function RtpSelector() {
           >
             + 添加本地 RTP 目录...
           </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Batch action modal ──────────────────────────────────────────────
+
+type BatchAction = 'injectRtp' | 'cleanUnused' | 'clearMissing';
+
+function BatchModal({
+  action,
+  onClose,
+  onConfirm,
+}: {
+  action: BatchAction;
+  onClose: () => void;
+  onConfirm: (cats: string[]) => Promise<void>;
+}) {
+  const { gameData, analyses } = useStore();
+  const cats = getCategories(gameData?.engine ?? '2k3');
+  const [selected, setSelected] = useState<Set<string>>(new Set(cats));
+  const [busy, setBusy] = useState(false);
+
+  const counts = useMemo(() => {
+    const m = new Map<string, number>();
+    const allAnalyses = Array.from(analyses.values());
+
+    if (action === 'injectRtp') {
+      for (const a of allAnalyses) {
+        if (a.inRtp && !a.onDisk) {
+          m.set(a.asset.category, (m.get(a.asset.category) || 0) + 1);
+        }
+      }
+    } else if (action === 'cleanUnused') {
+      for (const a of allAnalyses) {
+        if (a.onDisk && !a.inDatabase) {
+          m.set(a.asset.category, (m.get(a.asset.category) || 0) + 1);
+        }
+      }
+    } else if (action === 'clearMissing') {
+      for (const a of allAnalyses) {
+        if (!a.onDisk && a.inDatabase && !a.inRtp) {
+          m.set(a.asset.category, (m.get(a.asset.category) || 0) + 1);
+        }
+      }
+    }
+    return m;
+  }, [analyses, action]);
+
+  const total = Array.from(counts.values()).reduce((s, c) => s + c, 0);
+
+  const labels: Record<BatchAction, string> = {
+    injectRtp: '注入RTP',
+    cleanUnused: '清理无用素材',
+    clearMissing: '清除无效引用',
+  };
+
+  function toggle(cat: string) {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(cat)) next.delete(cat); else next.add(cat);
+      return next;
+    });
+  }
+
+  async function handleConfirm() {
+    setBusy(true);
+    try {
+      await onConfirm(Array.from(selected));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      zIndex: 2000,
+    }} onClick={onClose}>
+      <div style={{
+        background: 'var(--color-bg-elev)', borderRadius: 10,
+        padding: 20, minWidth: 320, maxWidth: 400,
+        boxShadow: '0 16px 48px rgba(0,0,0,0.3)',
+      }} onClick={e => e.stopPropagation()}>
+        <h3 style={{ margin: '0 0 12px', fontSize: 16, color: 'var(--color-text)' }}>
+          {labels[action]}
+        </h3>
+        <p style={{ fontSize: 12, color: 'var(--color-text-muted)', margin: '0 0 12px' }}>
+          选择要处理的类别（共 {total} 项）
+        </p>
+        <div style={{ maxHeight: 200, overflowY: 'auto', marginBottom: 12, border: '1px solid var(--color-border)', borderRadius: 6, padding: 4 }}>
+          {cats.map(cat => {
+            const cnt = counts.get(cat) || 0;
+            return (
+              <label key={cat} style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '4px 8px', cursor: 'pointer', fontSize: 13,
+                borderRadius: 4,
+                opacity: cnt === 0 ? 0.4 : 1,
+              }}>
+                <input
+                  type="checkbox"
+                  checked={selected.has(cat)}
+                  onChange={() => toggle(cat)}
+                  disabled={cnt === 0}
+                />
+                <span style={{ flex: 1, color: 'var(--color-text)' }}>{cat}</span>
+                <span style={{ fontSize: 11, color: 'var(--color-text-muted)', minWidth: 24, textAlign: 'right' }}>{cnt}</span>
+              </label>
+            );
+          })}
+        </div>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button onClick={onClose} disabled={busy} style={{
+            padding: '6px 16px', borderRadius: 6, border: '1px solid var(--color-border)',
+            background: 'var(--color-bg-elev)', color: 'var(--color-text)',
+            cursor: busy ? 'not-allowed' : 'pointer', fontSize: 13,
+          }}>取消</button>
+          <button onClick={handleConfirm} disabled={busy || selected.size === 0} style={{
+            padding: '6px 16px', borderRadius: 6, border: 'none',
+            background: busy ? 'var(--color-text-muted)' : 'var(--color-primary)',
+            color: 'var(--color-text-inverse)', cursor: busy || selected.size === 0 ? 'not-allowed' : 'pointer',
+            fontSize: 13, fontWeight: 500,
+          }}>{busy ? '处理中...' : '确认'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Quick actions dropdown ──────────────────────────────────────────
+
+function QuickActions({ onAction }: { onAction: (a: BatchAction) => void }) {
+  const { gameData } = useStore();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, []);
+
+  if (!gameData) return null;
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button onClick={() => setOpen(!open)} style={{
+        display: 'flex', alignItems: 'center', gap: 4,
+        padding: '5px 10px', fontSize: 12,
+        background: 'var(--color-bg-elev)', border: '1px solid var(--color-border)',
+        borderRadius: 6, cursor: 'pointer', color: 'var(--color-text)',
+        whiteSpace: 'nowrap',
+      }}>
+        <span>便捷功能</span>
+        <span style={{ color: 'var(--color-text-muted)', fontSize: 10 }}>▾</span>
+      </button>
+      {open && (
+        <div style={{
+          position: 'absolute', top: '100%', right: 0, marginTop: 4,
+          minWidth: 160, background: 'var(--color-bg-elev)',
+          border: '1px solid var(--color-border)', borderRadius: 8,
+          boxShadow: '0 10px 25px rgba(0,0,0,0.1)', zIndex: 1000, padding: 4,
+        }}>
+          {([
+            ['injectRtp', '注入RTP', '将所选RTP源中的素材复制到项目目录'],
+            ['cleanUnused', '清理无用素材', '删除磁盘上有但数据库未引用的素材'],
+            ['clearMissing', '清除无效引用', '清除指向已缺失素材的数据库引用'],
+          ] as const).map(([id, label, desc]) => (
+            <button key={id} onClick={() => { setOpen(false); onAction(id); }} title={desc} style={{
+              display: 'block', width: '100%', textAlign: 'left',
+              padding: '8px 10px', border: 'none', background: 'transparent',
+              cursor: 'pointer', borderRadius: 4, fontSize: 12,
+              color: 'var(--color-text)',
+            }}>
+              {label}
+            </button>
+          ))}
         </div>
       )}
     </div>
@@ -669,11 +848,169 @@ export default function App() {
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
   const [theme, setTheme] = useState<Theme>(initialTheme);
+  const [batchAction, setBatchAction] = useState<BatchAction | null>(null);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem('rmm-theme', theme);
   }, [theme]);
+
+  // ── Batch actions ─────────────────────────────────────────────────
+
+  async function handleInjectRtp(cats: string[]) {
+    const engine = gameData!.engine;
+    const root = gameData!.rootHandle!;
+    const catSet = new Set(cats);
+
+    // Collect RTP assets to inject
+    const toInject = Array.from(analyses.values())
+      .filter(a => a.inRtp && !a.onDisk && catSet.has(a.asset.category));
+    if (toInject.length === 0) { alert('所选类别中没有可注入的 RTP 素材'); return; }
+
+    let ok = 0;
+    const missing: string[] = [];
+
+    for (const analysis of toInject) {
+      const asset = analysis.asset;
+      // Determine the disk directory for this category
+      const dirName = asset.path.split('/')[0];
+      let dirHandle: FileSystemDirectoryHandle;
+      try { dirHandle = await root.getDirectoryHandle(dirName); }
+      catch { try { dirHandle = await root.getDirectoryHandle(dirName, { create: true }); } catch { continue; } }
+
+      let blob: Blob | null = null;
+      const rtpKind = getActiveRtpKind();
+
+      if (rtpKind === 'builtin') {
+        const bundleUrl = getRtpBundleUrl(asset.name, asset.category, engine);
+        if (bundleUrl) {
+          try {
+            const resp = await fetch(bundleUrl);
+            if (resp.ok) blob = await resp.blob();
+          } catch {}
+        }
+      } else if (rtpKind === 'disk') {
+        const info = lookupRTPFileInfo(asset.name, asset.category, engine);
+        if (info) {
+          const actualDir = resolveRtpDirName(info.rtpDir);
+          if (actualDir) {
+            const diskHandle = getActiveRtpDiskHandle();
+            if (diskHandle) {
+              try {
+                const subDir = await diskHandle.getDirectoryHandle(actualDir);
+                for (const ext of ['.png', '.bmp', '.wav', '.mp3', '.ogg', '.mid', '.midi', '.avi', '.mpg', '.mpeg']) {
+                  try {
+                    const fh = await subDir.getFileHandle(info.fileName + ext);
+                    blob = await fh.getFile();
+                    break;
+                  } catch {}
+                }
+              } catch {}
+            }
+          }
+        }
+      }
+
+      if (!blob) {
+        missing.push(`${asset.category}/${asset.name}`);
+        continue;
+      }
+
+      try {
+        const newFileName = asset.name; // Use DB reference name, keep original extension
+        const fh = await dirHandle.getFileHandle(newFileName, { create: true });
+        const w = await fh.createWritable();
+        await w.write(blob);
+        await w.close();
+        ok++;
+      } catch (e) {
+        missing.push(`${asset.category}/${asset.name}: ${(e as Error).message}`);
+      }
+    }
+
+    // Refresh asset list and analyses
+    const found = await scanProjectAssets(root);
+    const refs = traceAllReferences(gameData!);
+    const { allAssets, analyses: newMap } = buildAnalyses(found, refs, gameData!.engine);
+    setAssets(allAssets);
+    setAnalyses(newMap);
+    setBatchAction(null);
+
+    let msg = `已注入 ${ok}/${toInject.length} 个素材`;
+    if (missing.length > 0) {
+      msg += `\n\n${missing.length} 个素材在当前 RTP 中未找到：\n${missing.slice(0, 10).join('\n')}${missing.length > 10 ? `\n...等 ${missing.length - 10} 个` : ''}`;
+    }
+    alert(msg);
+  }
+
+  async function handleCleanUnused(cats: string[]) {
+    const catSet = new Set(cats);
+    const toDelete = Array.from(analyses.values())
+      .filter(a => a.onDisk && !a.inDatabase && catSet.has(a.asset.category))
+      .map(a => a.asset);
+    if (toDelete.length === 0) { alert('所选类别中没有可清理的无用素材'); return; }
+
+    setLoading(true);
+    try {
+      const result = await deleteAssets(gameData!, toDelete, false);
+      if (result.deletedBlobs) {
+        for (const [k, v] of result.deletedBlobs) pendingBlobBuffer.current.set(k, v);
+      }
+      const deletedSet = new Set(result.filesDeleted);
+      const newAssets = assets.filter(a => !deletedSet.has(a.path));
+      const diskOnly = newAssets.filter(a => a.handle !== undefined);
+      const refs = traceAllReferences(gameData!);
+      const { allAssets, analyses: newMap } = buildAnalyses(diskOnly, refs, gameData!.engine);
+      setAssets(allAssets);
+      setAnalyses(newMap);
+      setSelectedKeys(new Set());
+      setSelectedAssetKey(null);
+      await refreshSnapshots(gameData!.rootHandle);
+      setBatchAction(null);
+      alert(`已删除 ${result.filesDeleted.length}/${toDelete.length} 个无用素材`);
+    } catch (e) {
+      alert('清理失败：' + (e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleClearMissing(cats: string[]) {
+    const catSet = new Set(cats);
+    const toClear = Array.from(analyses.values())
+      .filter(a => !a.onDisk && a.inDatabase && !a.inRtp && catSet.has(a.asset.category))
+      .map(a => a.asset);
+    if (toClear.length === 0) { alert('所选类别中没有可清除的无效引用'); return; }
+
+    setLoading(true);
+    try {
+      const result = await deleteAssets(gameData!, toClear, true);
+      if (result.deletedBlobs) {
+        for (const [k, v] of result.deletedBlobs) pendingBlobBuffer.current.set(k, v);
+      }
+      const newAssets = assets.filter(a => !result.filesDeleted.includes(a.path));
+      const diskOnly = newAssets.filter(a => a.handle !== undefined);
+      const refs = traceAllReferences(gameData!);
+      const { allAssets, analyses: newMap } = buildAnalyses(diskOnly, refs, gameData!.engine);
+      setAssets(allAssets);
+      setAnalyses(newMap);
+      setSelectedKeys(new Set());
+      setSelectedAssetKey(null);
+      await refreshSnapshots(gameData!.rootHandle);
+      setBatchAction(null);
+      alert(`已清除 ${toClear.length} 个无效引用`);
+    } catch (e) {
+      alert('清除失败：' + (e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleBatchConfirm(cats: string[]) {
+    if (batchAction === 'injectRtp') await handleInjectRtp(cats);
+    else if (batchAction === 'cleanUnused') await handleCleanUnused(cats);
+    else if (batchAction === 'clearMissing') await handleClearMissing(cats);
+  }
 
   function toggleSelect(k: string) {
     setSelectedKeys(prev => {
@@ -898,6 +1235,7 @@ export default function App() {
           onEncodingChange={handleEncodingChange}
         />
         <RtpSelector />
+        {gameData && <QuickActions onAction={setBatchAction} />}
         {gameData && (
           <div ref={snapMenuRef} style={{ position: 'relative' }}>
             <button
@@ -911,7 +1249,7 @@ export default function App() {
               }}
               title={snapshots.length > 0 ? `撤销最近 ${snapshots.length} 次修改` : '暂无快照'}
             >
-              ↶ 撤销
+              <span>↶ </span> 撤销
               {snapshots.length > 0 && (
                 <span style={{
                   background: 'var(--color-primary-soft)', color: 'var(--color-primary-text)',
@@ -998,7 +1336,7 @@ export default function App() {
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}
         >
-          {theme === 'dark' ? '☀' : '☾'}
+          <span style={{ filter: 'grayscale(1)' }}>{theme === 'dark' ? '☀' : '☾'}</span>
         </button>
       </header>
 
@@ -1224,6 +1562,13 @@ export default function App() {
           </aside>
         </main>
       </div>
+      {batchAction && (
+        <BatchModal
+          action={batchAction}
+          onClose={() => setBatchAction(null)}
+          onConfirm={handleBatchConfirm}
+        />
+      )}
     </div>
   );
 }
