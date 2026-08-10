@@ -13,7 +13,7 @@ import AssetDetail from './components/AssetDetail';
 import VirtualGrid from './components/VirtualGrid';
 import type { AssetReference } from './types/index';
 import { initBuiltinRtp, scanDiskRtpFileSet, initDiskRtp, activateDiskRtp, getRtpBundleUrl, lookupRTPFileInfo, resolveRtpDirName, getActiveRtpKind, getActiveRtpDiskHandle } from './core/rtpIndex';
-import { CATEGORY_EXTS, getPrimaryExt, getCategories } from './scanner/assetTypes';
+import { CATEGORY_EXTS, getPrimaryExt, getCategories, DB_FILE_EXTS } from './scanner/assetTypes';
 
 
 
@@ -1202,14 +1202,12 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameData?.rootHandle, analyses]);
 
-  const DB_EXTS = ['.ldb', '.lmt', '.lmu'];
-
   async function handleRestoreSnapshot(snap: SnapshotInfo) {
     if (!gameData?.rootHandle) return;
     const ok = confirm(`恢复此快照？\n\n${snap.label || snap.dirName}\n\n涉及 ${snap.files.length + (snap.deletedFiles?.length ?? 0)} 个文件，恢复后当前磁盘上的修改将被覆盖。`);
     if (!ok) return;
 
-    const hasDbChange = snap.files.some(f => DB_EXTS.some(ext => f.endsWith(ext)));
+    const hasDbChange = snap.files.some(f => DB_FILE_EXTS.some(ext => f.endsWith(ext)));
     setLoading(true);
     setLoadingHint(hasDbChange ? '正在恢复快照并重解码项目数据...' : '正在恢复快照并刷新素材索引...');
     try {

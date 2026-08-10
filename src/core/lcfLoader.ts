@@ -1,5 +1,5 @@
 import iconv from 'iconv-lite';
-import { decodeDatabase, decodeMapUnit, decodeTreeMap } from 'rpgrt';
+import { decodeDatabase, decodeMapUnit, decodeTreeMap, EventCommandCode } from 'rpgrt';
 import type { Database, MapUnit, MapInfo, TreeMap, EngineVersion } from 'rpgrt';
 import type { ProjectGameData, EncodingName } from '../types/index';
 import { makeTranscoder, resolveIconvEncoding } from './sharedEngine';
@@ -146,7 +146,19 @@ export function splitDbRefs(db: Database): { fileRefs: string[]; displayTexts: s
 function extractMapTexts(bufs: Uint8Array[], enc: EncodingName, engine: EngineVersion): string[] {
   const t = makeTranscoder(enc);
   const texts: string[] = [];
-  const textCodes = new Set([10110, 20110, 10140, 20140, 10150, 10610, 10740, 12410, 22410]);
+  // 事件命令中会包含游戏内显示文本的命令码
+  // 2k3 变体 = 对应 2k 基础值 + 10000（rpgrt 的 EventCommandCode 没有单独的 2k3 变体常量）
+  const textCodes = new Set([
+    EventCommandCode.ShowMessage,        // 10110  显示文章
+    EventCommandCode.ShowMessage + 10000, // 20110  显示文章 (2k3)
+    EventCommandCode.ShowChoice,          // 10140  显示选项
+    EventCommandCode.ShowChoice + 10000,  // 20140  显示选项 (2k3)
+    EventCommandCode.InputNumber,         // 10150  数值输入
+    EventCommandCode.ChangeHeroName,      // 10610  更改英雄名称
+    EventCommandCode.EnterHeroName,       // 10740  输入英雄名称
+    EventCommandCode.Comment,             // 12410  注释（对编码检测仍有参考价值）
+    EventCommandCode.Comment + 10000,     // 22410  注释 (2k3)
+  ]);
   for (const buf of bufs) {
     try {
       const map = decodeMapUnit(buf, { engine, transcoder: t });

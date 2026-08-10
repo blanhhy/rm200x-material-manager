@@ -66,3 +66,6 @@ export function getCategories(engine: '2k' | '2k3'): readonly AssetCategory[] {
   if (engine === '2k3') return ASSET_DIRECTORIES;
   return ASSET_DIRECTORIES.filter(c => !V2K3_ONLY_CATEGORIES.has(c));
 }
+
+/** 数据库文件的扩展名 */
+export const DB_FILE_EXTS = ['.ldb', '.lmt', '.lmu'] as const;
