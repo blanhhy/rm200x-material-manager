@@ -2,29 +2,23 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from './store/useStore';
 import { loadGameProject, reDecodeWithEncoding } from './core/lcfLoader';
 import { scanProjectAssets } from './scanner/assetScanner';
-import { traceAllReferences } from './core/referenceTracker';
-import { buildAnalyses } from './core/assetAnalyzer';
-import { renameAsset } from './core/renameEngine';
-import { deleteAssets } from './core/deleteEngine';
-import { restoreSnapshot, deleteSnapshot } from './core/snapshot';
-import type { SnapshotInfo } from './core/snapshot';
+import { useRebuildAnalyses } from './hooks/useRebuildAnalyses';
+import { useSelection } from './hooks/useSelection';
+import { useRenameAsset } from './hooks/useRenameAsset';
+import { useDeleteAsset } from './hooks/useDeleteAsset';
+import { useSnapshotManager } from './hooks/useSnapshotManager';
+import { useBatchActions } from './hooks/useBatchActions';
 import AssetPreview from './components/AssetPreview';
 import AssetDetail from './components/AssetDetail';
 import VirtualGrid from './components/VirtualGrid';
 import WorkspaceSelector from './components/WorkspaceSelector';
 import RtpSelector from './components/RtpSelector';
 import BatchModal from './components/BatchModal';
-import type { BatchAction } from './components/BatchModal';
 import QuickActions from './components/QuickActions';
 import FilterDropdown from './components/FilterDropdown';
 import TaskPanel from './components/TaskPanel';
-import type { AssetAnalysis, AssetFile, AssetReference, ProjectGameData } from './types/index';
-import { initBuiltinRtp, getRtpBundleUrl, lookupRTPFileInfo, resolveRtpDirName, getActiveRtpKind, getActiveRtpDiskHandle } from './core/rtpIndex';
-import { CATEGORY_EXTS, getPrimaryExt, getCategories, DB_FILE_EXTS } from './scanner/assetTypes';
-
-function assetKey(cat: string, stem: string): string {
-  return `${cat}/${stem.toLowerCase()}`;
-}
+import { initBuiltinRtp } from './core/rtpIndex';
+import { getCategories } from './scanner/assetTypes';
 
 const batchBtnStyle: React.CSSProperties = {
   padding: '4px 10px', fontSize: 12, borderRadius: 4,
@@ -46,20 +40,38 @@ export default function App() {
     selectedAssetKey, setSelectedAssetKey,
     loading, setLoading,
     setError,
-    tasks, clearCompletedTasks, addTask, updateTask,
-    snapshots, refreshSnapshots,
+    tasks, clearCompletedTasks,
+    snapshots,
     setActiveRtpSourceId,
   } = useStore();
 
-  /** 重新扫描磁盘、追踪引用、构建分析并更新状态。返回 analyses Map 供诊断使用 */
-  async function rebuildAnalyses(data: ProjectGameData, diskAssets: AssetFile[]): Promise<Map<string, AssetAnalysis>> {
-    const refs = traceAllReferences(data);
-    const { allAssets, analyses: map } = buildAnalyses(diskAssets, refs, data.engine);
-    setAssets(allAssets);
-    setAnalyses(map);
-    return map;
-  }
+  // ── 派生数据（必须在 hooks 前，因 useSelection 依赖 filteredAssets） ──
+  const filteredAssets = useMemo(() => assets.filter(a => {
+    if (a.category !== activeCategory) return false;
+    const entry = analyses.get(`${a.category}/${a.stem.toLowerCase()}`);
+    if (!entry) return filterUsed === 'all';
+    const onDisk = entry.onDisk;
+    const inDb = entry.inDatabase;
+    switch (filterUsed) {
+      case 'disk':    return onDisk;
+      case 'refs':    return inDb;
+      case 'used':    return onDisk && inDb;
+      case 'unused':  return onDisk && !inDb;
+      case 'rtp':     return !onDisk && entry.inRtp;
+      case 'missing': return !onDisk && inDb && !entry.inRtp;
+      default:        return true;
+    }
+  }), [assets, activeCategory, filterUsed, analyses]);
 
+  // ── Hooks: 业务逻辑模块 ───────────────────────────────────────────
+  const rebuild = useRebuildAnalyses();
+  const { selectedKeys, setSelectedKeys, toggleSelect, selectAllFiltered, invertSelection } = useSelection(filteredAssets);
+  const { renaming, handleRename } = useRenameAsset();
+  const { deleting, handleDeleteSelected } = useDeleteAsset(selectedKeys, setSelectedKeys);
+  const { snapMenuOpen, setSnapMenuOpen, snapMenuRef, loadingHint, handleRestoreSnapshot, handleDeleteSnapshot } = useSnapshotManager();
+  const { batchAction, setBatchAction, handleBatchConfirm } = useBatchActions(setSelectedKeys);
+
+  // ── 项目加载 / 刷新 / 关闭 ────────────────────────────────────────
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -99,7 +111,6 @@ export default function App() {
       }
       setGameData(data);
 
-      // Initialize built-in RTP for this engine
       initBuiltinRtp(data.engine);
       setActiveRtpSourceId('builtin');
 
@@ -113,7 +124,7 @@ export default function App() {
       for (const a of found) stems.add(a.stem.toLowerCase());
 
       const t1 = performance.now();
-      const map = await rebuildAnalyses(data, found);
+      const map = await rebuild(data, found);
       console.log(`[性能] rebuildAnalyses: ${(performance.now() - t1).toFixed(0)}ms`);
 
       console.group('[诊断] 项目加载');
@@ -173,17 +184,16 @@ export default function App() {
     setFilterUsed('disk');
   }
 
+  // ── 编码切换 ──────────────────────────────────────────────────────
   async function handleEncodingChange(enc: string) {
     if (!gameData) return;
     setLoading(true);
     try {
-      // 重新 decode DB + maps
       const newData = await reDecodeWithEncoding(gameData, enc);
       setGameData(newData);
 
-      // 重跑引用追踪
       const diskOnly = assets.filter(a => a.handle !== undefined);
-      await rebuildAnalyses(newData, diskOnly);
+      await rebuild(newData, diskOnly);
 
       console.log(`[ENCODE SWITCH] → ${enc}`);
     } catch (e) {
@@ -193,23 +203,7 @@ export default function App() {
     }
   }
 
-  const filteredAssets = useMemo(() => assets.filter(a => {
-    if (a.category !== activeCategory) return false;
-    const entry = analyses.get(`${a.category}/${a.stem.toLowerCase()}`);
-    if (!entry) return filterUsed === 'all';
-    const onDisk = entry.onDisk;
-    const inDb = entry.inDatabase;
-    switch (filterUsed) {
-      case 'disk':    return onDisk;
-      case 'refs':    return inDb;
-      case 'used':    return onDisk && inDb;
-      case 'unused':  return onDisk && !inDb;
-      case 'rtp':     return !onDisk && entry.inRtp;
-      case 'missing': return !onDisk && inDb && !entry.inRtp;
-      default:        return true;
-    }
-  }), [assets, activeCategory, filterUsed, analyses]);
-
+  // ── 选中资产 ──────────────────────────────────────────────────────
   const selectedAsset = selectedAssetKey ? analyses.get(selectedAssetKey)?.asset ?? null : null;
   const selectedAnalysis = selectedAssetKey ? analyses.get(selectedAssetKey) ?? null : null;
 
@@ -221,405 +215,15 @@ export default function App() {
 
   const mapCount = gameData?.maps?.size ?? 0;
 
-  const [renaming, setRenaming] = useState(false);
-  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
-  const [deleting, setDeleting] = useState(false);
+  // ── 主题 ──────────────────────────────────────────────────────────
   const [theme, setTheme] = useState<Theme>(initialTheme);
-  const [batchAction, setBatchAction] = useState<BatchAction | null>(null);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem('rmm-theme', theme);
   }, [theme]);
 
-  // ── Batch actions ─────────────────────────────────────────────────
-
-  async function handleInjectRtp(cats: string[]) {
-    const engine = gameData!.engine;
-    const root = gameData!.rootHandle!;
-    const catSet = new Set(cats);
-
-    // Collect RTP assets to inject
-    const toInject = Array.from(analyses.values())
-      .filter(a => a.inRtp && !a.onDisk && catSet.has(a.asset.category));
-    if (toInject.length === 0) { alert('所选类别中没有可注入的 RTP 素材'); return; }
-
-    // Close batch modal immediately, run as background task
-    setBatchAction(null);
-
-    const taskId = addTask({
-      label: `注入 RTP 素材 (0/${toInject.length})`,
-      progress: 0,
-      status: 'running',
-    });
-
-    let ok = 0;
-    const missing: string[] = [];
-    const total = toInject.length;
-
-    for (let i = 0; i < toInject.length; i++) {
-      const analysis = toInject[i];
-      const asset = analysis.asset;
-      const dirName = asset.path.split('/')[0];
-      let dirHandle: FileSystemDirectoryHandle;
-      try { dirHandle = await root.getDirectoryHandle(dirName); }
-      catch { try { dirHandle = await root.getDirectoryHandle(dirName, { create: true }); } catch {
-        missing.push(`${asset.category}/${asset.name}: 无法创建目录`);
-        continue;
-      }}
-
-      let blob: Blob | null = null;
-      const rtpKind = getActiveRtpKind();
-
-      if (rtpKind === 'builtin') {
-        const bundleUrl = getRtpBundleUrl(asset.name, asset.category, engine);
-        if (bundleUrl) {
-          try {
-            const resp = await fetch(bundleUrl);
-            if (resp.ok) blob = await resp.blob();
-          } catch {}
-        }
-      } else if (rtpKind === 'disk') {
-        const info = lookupRTPFileInfo(asset.name, asset.category, engine);
-        if (info) {
-          const actualDir = resolveRtpDirName(info.rtpDir);
-          if (actualDir) {
-            const diskHandle = getActiveRtpDiskHandle();
-            if (diskHandle) {
-              try {
-                const subDir = await diskHandle.getDirectoryHandle(actualDir);
-                for (const ext of CATEGORY_EXTS[asset.category]) {
-                  try {
-                    const fh = await subDir.getFileHandle(info.fileName + ext);
-                    blob = await fh.getFile();
-                    break;
-                  } catch {}
-                }
-              } catch {}
-            }
-          }
-        }
-      }
-
-      if (!blob) {
-        missing.push(`${asset.category}/${asset.name}`);
-        updateTask(taskId, {
-          progress: Math.round(((i + 1) / total) * 100),
-          label: `注入 RTP 素材 (${i + 1}/${total})`,
-          message: missing.length > 0 ? `${missing.length} 个未找到` : undefined,
-        });
-        continue;
-      }
-
-      try {
-        const ext = asset.ext || getPrimaryExt(asset.category);
-        const newFileName = asset.stem + ext;
-        const fh = await dirHandle.getFileHandle(newFileName, { create: true });
-        const w = await fh.createWritable();
-        await w.write(blob);
-        await w.close();
-        ok++;
-      } catch (e) {
-        missing.push(`${asset.category}/${asset.name}: ${(e as Error).message}`);
-      }
-
-      updateTask(taskId, {
-        progress: Math.round(((i + 1) / total) * 100),
-        label: `注入 RTP 素材 (${i + 1}/${total})`,
-        message: missing.length > 0 ? `${missing.length} 个未找到` : undefined,
-      });
-    }
-
-    // Refresh asset list and analyses
-    try {
-      const found = await scanProjectAssets(root);
-      await rebuildAnalyses(gameData!, found);
-    } catch (e) {
-      updateTask(taskId, {
-        status: 'error',
-        label: `RTP 注入失败`,
-        message: (e as Error).message,
-        progress: 100,
-      });
-      return;
-    }
-
-    const msg = `已注入 ${ok}/${total} 个素材${missing.length > 0 ? `，${missing.length} 个未找到` : ''}`;
-    updateTask(taskId, {
-      status: missing.length > 0 ? 'error' : 'success',
-      label: msg,
-      progress: 100,
-      message: missing.length > 0 ? missing.slice(0, 5).join(', ') + (missing.length > 5 ? `...等 ${missing.length} 个` : '') : undefined,
-    });
-  }
-
-  async function handleCleanUnused(cats: string[]) {
-    const catSet = new Set(cats);
-    const toDelete = Array.from(analyses.values())
-      .filter(a => a.onDisk && !a.inDatabase && catSet.has(a.asset.category))
-      .map(a => a.asset);
-    if (toDelete.length === 0) { alert('所选类别中没有可清理的无用素材'); return; }
-
-    setLoading(true);
-    try {
-      const result = await deleteAssets(gameData!, toDelete, false);
-      if (result.deletedBlobs) {
-        for (const [k, v] of result.deletedBlobs) pendingBlobBuffer.current.set(k, v);
-      }
-      const deletedSet = new Set(result.filesDeleted);
-      const newAssets = assets.filter(a => !deletedSet.has(a.path));
-      const diskOnly = newAssets.filter(a => a.handle !== undefined);
-      await rebuildAnalyses(gameData!, diskOnly);
-      setSelectedKeys(new Set());
-      setSelectedAssetKey(null);
-      await refreshSnapshots(gameData!.rootHandle);
-      setBatchAction(null);
-      alert(`已删除 ${result.filesDeleted.length}/${toDelete.length} 个无用素材`);
-    } catch (e) {
-      alert('清理失败：' + (e as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleClearMissing(cats: string[]) {
-    const catSet = new Set(cats);
-    const toClear = Array.from(analyses.values())
-      .filter(a => !a.onDisk && a.inDatabase && !a.inRtp && catSet.has(a.asset.category))
-      .map(a => a.asset);
-    if (toClear.length === 0) { alert('所选类别中没有可清除的无效引用'); return; }
-
-    setLoading(true);
-    try {
-      const result = await deleteAssets(gameData!, toClear, true);
-      if (result.deletedBlobs) {
-        for (const [k, v] of result.deletedBlobs) pendingBlobBuffer.current.set(k, v);
-      }
-      const newAssets = assets.filter(a => !result.filesDeleted.includes(a.path));
-      const diskOnly = newAssets.filter(a => a.handle !== undefined);
-      await rebuildAnalyses(gameData!, diskOnly);
-      setSelectedKeys(new Set());
-      setSelectedAssetKey(null);
-      await refreshSnapshots(gameData!.rootHandle);
-      setBatchAction(null);
-      alert(`已清除 ${toClear.length} 个无效引用`);
-    } catch (e) {
-      alert('清除失败：' + (e as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleBatchConfirm(cats: string[]) {
-    if (batchAction === 'injectRtp') await handleInjectRtp(cats);
-    else if (batchAction === 'cleanUnused') await handleCleanUnused(cats);
-    else if (batchAction === 'clearMissing') await handleClearMissing(cats);
-  }
-
-  function toggleSelect(k: string) {
-    setSelectedKeys(prev => {
-      const next = new Set(prev);
-      if (next.has(k)) next.delete(k); else next.add(k);
-      return next;
-    });
-  }
-
-  function selectAllFiltered() {
-    setSelectedKeys(new Set(filteredAssets.map(a => `${a.category}/${a.stem.toLowerCase()}`)));
-  }
-
-  function invertSelection() {
-    const all = new Set(filteredAssets.map(a => `${a.category}/${a.stem.toLowerCase()}`));
-    setSelectedKeys(prev => {
-      const next = new Set<string>();
-      for (const k of all) if (!prev.has(k)) next.add(k);
-      return next;
-    });
-  }
-
-  async function handleRename(newStem: string) {
-    if (!gameData || !selectedAnalysis) return;
-    setRenaming(true);
-    try {
-      const result = await renameAsset(gameData, selectedAnalysis.asset, newStem);
-      if (!result.success) {
-        alert('重命名失败：' + result.message);
-        return;
-      }
-
-      // 更新 assets 里对应的条目（需要拿到 move 后的新 FileHandle）
-      const oldAsset = selectedAnalysis.asset;
-      const newFileName = newStem + oldAsset.ext;
-      let newHandle = oldAsset.handle;
-      try {
-        const dirName = oldAsset.path.split('/')[0];
-        const dirHandle = await gameData.rootHandle!.getDirectoryHandle(dirName);
-        newHandle = await dirHandle.getFileHandle(newFileName);
-      } catch (e) {
-        console.warn('重命名后无法重新打开文件句柄：', e);
-      }
-      const newAsset = {
-        ...oldAsset,
-        name: newFileName,
-        stem: newStem,
-        path: oldAsset.path.replace(/[^/]+$/, newFileName),
-        handle: newHandle,
-      };
-      const newAssets = assets.map(a =>
-        a.name === oldAsset.name && a.path === oldAsset.path ? newAsset : a,
-      );
-      setAssets(newAssets);
-
-      // 重跑引用分析
-      const diskOnly = newAssets.filter(a => a.handle !== undefined);
-      await rebuildAnalyses(gameData, diskOnly);
-
-      // 选中新 key
-      const newKey = assetKey(newAsset.category, newAsset.stem);
-      setSelectedAssetKey(newKey);
-    } catch (e) {
-      alert('重命名出错：' + (e as Error).message);
-    } finally {
-      setRenaming(false);
-    }
-  }
-
-  // ===== 快照/撤销 =====
-  const [snapMenuOpen, setSnapMenuOpen] = useState(false);
-  const snapMenuRef = useRef<HTMLDivElement>(null);
-  const [loadingHint, setLoadingHint] = useState<string | null>(null);
-  const pendingBlobBuffer = useRef<Map<string, Blob>>(new Map());
-
-  useEffect(() => {
-    const h = (e: MouseEvent) => {
-      if (snapMenuRef.current && !snapMenuRef.current.contains(e.target as Node)) setSnapMenuOpen(false);
-    };
-    document.addEventListener('mousedown', h);
-    return () => document.removeEventListener('mousedown', h);
-  }, []);
-
-  // 每次重命名后刷新快照列表
-  useEffect(() => {
-    if (gameData?.rootHandle) refreshSnapshots(gameData.rootHandle);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gameData?.rootHandle, analyses]);
-
-  async function handleRestoreSnapshot(snap: SnapshotInfo) {
-    if (!gameData?.rootHandle) return;
-    const ok = confirm(`恢复此快照？\n\n${snap.label || snap.dirName}\n\n涉及 ${snap.files.length + (snap.deletedFiles?.length ?? 0)} 个文件，恢复后当前磁盘上的修改将被覆盖。`);
-    if (!ok) return;
-
-    const hasDbChange = snap.files.some(f => DB_FILE_EXTS.some(ext => f.endsWith(ext)));
-    setLoading(true);
-    setLoadingHint(hasDbChange ? '正在恢复快照并重解码项目数据...' : '正在恢复快照并刷新素材索引...');
-    try {
-      const success = await restoreSnapshot(gameData.rootHandle, snap, pendingBlobBuffer.current);
-      if (!success) throw new Error('快照目录损坏或已删除');
-
-      for (const rel of snap.files) pendingBlobBuffer.current.delete(rel);
-      for (const rel of snap.deletedFiles ?? []) pendingBlobBuffer.current.delete(rel);
-
-      const newData = hasDbChange
-        ? await reDecodeWithEncoding(gameData, gameData.encoding)
-        : gameData;
-
-      const found = await scanProjectAssets(gameData.rootHandle);
-      let refs: AssetReference[];
-      if (hasDbChange) {
-        refs = traceAllReferences(newData);
-      } else {
-        refs = Array.from(analyses.values()).flatMap(e => e.references);
-      }
-      const { allAssets, analyses: map } = buildAnalyses(found, refs, newData.engine);
-      setGameData(newData);
-      setAssets(allAssets);
-      setAnalyses(map);
-      setSelectedAssetKey(null);
-
-      console.log(`[SNAPSHOT RESTORE] ← ${snap.dirName}, assets=${found.length}${hasDbChange ? ', reDecoded + traced' : ', reuse refs, skip reDecode + trace'}`);
-      await refreshSnapshots(gameData.rootHandle);
-    } catch (e) {
-      console.error('[SNAPSHOT RESTORE FAILED]', e);
-      alert('恢复出错：' + (e as Error).message);
-    } finally {
-      setLoading(false);
-      setLoadingHint(null);
-      setSnapMenuOpen(false);
-    }
-  }
-
-  async function handleDeleteSnapshot(snap: SnapshotInfo, e: React.MouseEvent) {
-    e.stopPropagation(); // don't trigger restore
-    if (!gameData) return;
-    const ok = confirm(`删除此快照？\n\n${snap.label || snap.dirName}\n\n快照删除后无法恢复。`);
-    if (!ok) return;
-    const success = await deleteSnapshot(gameData.rootHandle, snap);
-    if (success) {
-      await refreshSnapshots(gameData.rootHandle);
-    } else {
-      alert('删除快照失败');
-    }
-  }
-
-  async function handleDeleteSelected() {
-    if (!gameData || selectedKeys.size === 0) return;
-
-    const toDelete = Array.from(selectedKeys).map(k => analyses.get(k)?.asset).filter(Boolean) as typeof assets;
-    if (toDelete.length === 0) return;
-
-    const missingOnes = toDelete.filter(a => a.handle === undefined);
-    const diskOnes = toDelete.filter(a => a.handle !== undefined);
-
-    let msg = `确定删除选中的 ${toDelete.length} 个素材？`;
-    if (diskOnes.length > 0) msg += `\n· ${diskOnes.length} 个磁盘文件将被永久删除`;
-    if (missingOnes.length > 0) msg += `\n· ${missingOnes.length} 个缺失素材的引用将被清除`;
-    msg += `\n\n操作前会自动创建快照。`;
-    const ok = confirm(msg);
-    if (!ok) return;
-
-    setDeleting(true);
-    setLoading(true);
-    try {
-      const needClearRefs = missingOnes.length > 0;
-      const result = await deleteAssets(gameData, toDelete, needClearRefs);
-      if (!result.success && !result.filesDeleted.length && result.filesWritten.length === 0) {
-        alert('删除失败：' + result.message);
-        return;
-      }
-
-      if (result.deletedBlobs) {
-        for (const [k, v] of result.deletedBlobs) pendingBlobBuffer.current.set(k, v);
-      }
-
-      console.time('[DELETE] aftermath');
-
-      const deletedSet = new Set(result.filesDeleted);
-      const newAssets = assets.filter(a => !deletedSet.has(a.path));
-      setAssets(newAssets);
-
-      const diskOnly = newAssets.filter(a => a.handle !== undefined);
-      await rebuildAnalyses(gameData, diskOnly);
-
-      setSelectedKeys(new Set());
-      setSelectedAssetKey(null);
-
-      console.log(`[DELETE] ${result.message}`);
-      await refreshSnapshots(gameData.rootHandle);
-      console.timeEnd('[DELETE] aftermath');
-
-      if (!result.success) {
-        // 部分失败
-        alert(`部分删除成功：${result.message}`);
-      }
-    } catch (e) {
-      console.error('[DELETE FAILED]', e);
-      alert('删除出错：' + (e as Error).message);
-    } finally {
-      setDeleting(false);
-      setLoading(false);
-    }
-  }
-
+  // ── 工具函数 ──────────────────────────────────────────────────────
   function formatTime(ts: number) {
     const d = new Date(ts);
     return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
@@ -648,7 +252,11 @@ export default function App() {
         {gameData && (
           <div ref={snapMenuRef} style={{ position: 'relative' }}>
             <button
-              onClick={async () => { setSnapMenuOpen(!snapMenuOpen); await refreshSnapshots(gameData.rootHandle); }}
+              onClick={async () => {
+                setSnapMenuOpen(!snapMenuOpen);
+                const { refreshSnapshots } = useStore.getState();
+                await refreshSnapshots(gameData.rootHandle);
+              }}
               style={{
                 padding: '5px 10px', fontSize: 12,
                 background: 'var(--color-bg-elev)', border: '1px solid var(--color-border)',
@@ -967,13 +575,18 @@ export default function App() {
 
           <aside style={{ width: 350, borderLeft: '1px solid var(--color-border)', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--color-bg-elev)' }}>
             <div style={{ overflowY: 'auto', borderBottom: '1px solid var(--color-bg-hover)' }}>
-              <AssetPreview asset={selectedAsset} analysis={selectedAnalysis} engine={gameData?.engine} onSaved={() => gameData?.rootHandle && refreshSnapshots(gameData.rootHandle)} />
+              <AssetPreview asset={selectedAsset} analysis={selectedAnalysis} engine={gameData?.engine} onSaved={() => {
+                if (gameData?.rootHandle) {
+                  const { refreshSnapshots } = useStore.getState();
+                  refreshSnapshots(gameData.rootHandle);
+                }
+              }} />
             </div>
             <div style={{ flex: 1, overflowY: 'auto' }}>
               <AssetDetail
                 analysis={selectedAnalysis}
                 engine={gameData?.engine}
-                onRename={handleRename}
+                onRename={(newStem) => { if (selectedAnalysis) handleRename(newStem, selectedAnalysis); }}
                 renaming={renaming}
                 onDelete={() => {
                   if (!selectedAssetKey) return;
@@ -996,11 +609,3 @@ export default function App() {
     </div>
   );
 }
-
-
-
-
-
-
-
-
