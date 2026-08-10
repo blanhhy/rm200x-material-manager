@@ -3,16 +3,10 @@ import { useStore } from '../store/useStore';
 import type { AssetCategory, AssetFile, AssetAnalysis, EngineVersion } from '../types/index';
 import { parsePNGPalette0, replaceColorWithTransparency, swapPalette0WithRGB, parsePNG } from '../preview/pngPalette';
 import { getRtpBundleUrl, isRTPAvailable, getActiveRtpKind, getActiveRtpDiskHandle, lookupRTPFileInfo, resolveRtpDirName } from '../core/rtpIndex';
-import { CATEGORY_EXTS } from '../scanner/assetTypes';
+import { CATEGORY_EXTS, IMAGE_CATEGORIES } from '../scanner/assetTypes';
 import TransparentColorPicker from './TransparentColorPicker';
 
-const IMAGE_CATS: AssetCategory[] = [
-  'ChipSet','CharSet','FaceSet',
-  'Backdrop','Battle','Battle2','BattleCharSet','BattleWeapon','Monster',
-  'Panorama','Picture',
-  'System','System2','Title','GameOver','Frame',
-];
-const AUDIO_CATS: AssetCategory[] = ['Music','Sound'];
+const AUDIO_CATS: AssetCategory[] = ['Music', 'Sound'];
 
 const SPINNER = (
   <div style={{ textAlign: 'center', padding: 24, color: 'var(--color-text-muted)' }}>
@@ -91,7 +85,7 @@ export default function AssetPreview({
     setError(null);
     const canvas = canvasRef.current;
     if (canvas) { canvas.width = 0; canvas.height = 0; }
-    if (!asset || !asset.handle || !IMAGE_CATS.includes(asset.category)) return;
+    if (!asset || !asset.handle || !IMAGE_CATEGORIES.includes(asset.category)) return;
     let cancelled = false;
     const urls: string[] = [];
     setLoading(true);
@@ -159,7 +153,7 @@ export default function AssetPreview({
     setError(null);
     const canvas = canvasRef.current;
     if (canvas) { canvas.width = 0; canvas.height = 0; }
-    if (!asset || asset.handle !== undefined || !IMAGE_CATS.includes(asset.category) || !analysis?.inRtp || !engine) return;
+    if (!asset || asset.handle !== undefined || !IMAGE_CATEGORIES.includes(asset.category) || !analysis?.inRtp || !engine) return;
 
     const isAvailable = isRTPAvailable(asset.name, asset.category, engine);
     if (!isAvailable) {
@@ -325,7 +319,7 @@ export default function AssetPreview({
 
   // ── Non-disk assets (RTP or missing) ──────────────────────────────
   if (asset.handle === undefined) {
-    const isRtpImage = analysis?.inRtp && IMAGE_CATS.includes(asset.category) && engine;
+    const isRtpImage = analysis?.inRtp && IMAGE_CATEGORIES.includes(asset.category) && engine;
     const isRtpAudio = analysis?.inRtp && AUDIO_CATS.includes(asset.category);
 
     // RTP image: check availability in current source
@@ -414,7 +408,7 @@ export default function AssetPreview({
     );
   }
 
-  if (IMAGE_CATS.includes(asset.category)) {
+  if (IMAGE_CATEGORIES.includes(asset.category)) {
     return (
       <div style={{ padding: 12 }}>
         <div style={{ marginBottom: 8, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>

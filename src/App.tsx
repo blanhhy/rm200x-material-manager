@@ -13,29 +13,15 @@ import AssetDetail from './components/AssetDetail';
 import VirtualGrid from './components/VirtualGrid';
 import type { AssetReference } from './types/index';
 import { initBuiltinRtp, scanDiskRtpFileSet, initDiskRtp, activateDiskRtp, getRtpBundleUrl, lookupRTPFileInfo, resolveRtpDirName, getActiveRtpKind, getActiveRtpDiskHandle } from './core/rtpIndex';
-import { CATEGORY_EXTS, getPrimaryExt } from './scanner/assetTypes';
+import { CATEGORY_EXTS, getPrimaryExt, getCategories } from './scanner/assetTypes';
 
-const CORE_CATEGORIES = [
-  'ChipSet','CharSet','FaceSet',
-  'Backdrop','Battle','Monster',
-  'Panorama','Picture',
-  'System','Title','GameOver','Frame',
-  'Music','Sound','Movie',
-] as const;
+
 
 function assetKey(cat: string, stem: string): string {
   return `${cat}/${stem.toLowerCase()}`;
 }
 
-const V2K3_ONLY = ['Battle2','BattleCharSet','BattleWeapon','System2'] as const;
-
 const FILTER_LABEL: Record<string, string> = { all:'全部', disk:'素材库', refs:'数据库', used:'已使用', unused:'未使用', rtp:'RTP', missing:'缺失' };
-
-function getCategories(engine: '2k' | '2k3'): readonly string[] {
-  return engine === '2k3'
-    ? [...CORE_CATEGORIES, ...V2K3_ONLY]
-    : CORE_CATEGORIES;
-}
 
 const batchBtnStyle: React.CSSProperties = {
   padding: '4px 10px', fontSize: 12, borderRadius: 4,

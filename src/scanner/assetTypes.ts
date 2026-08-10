@@ -50,3 +50,19 @@ export const CATEGORY_EXTS: Record<AssetCategory, string[]> = {
 export function getPrimaryExt(category: AssetCategory): string {
   return CATEGORY_EXTS[category][0];
 }
+
+/** 2k3 独有类别（RM2k 中不存在） */
+export const V2K3_ONLY_CATEGORIES = new Set<AssetCategory>([
+  'Battle2', 'BattleCharSet', 'BattleWeapon', 'System2', 'Frame',
+]);
+
+/** 图片素材类别（ASSET_DIRECTORIES 中排除音频和视频） */
+export const IMAGE_CATEGORIES: readonly AssetCategory[] = ASSET_DIRECTORIES.filter(
+  c => c !== 'Music' && c !== 'Sound' && c !== 'Movie',
+);
+
+/** 根据引擎版本获取有效素材目录列表 */
+export function getCategories(engine: '2k' | '2k3'): readonly AssetCategory[] {
+  if (engine === '2k3') return ASSET_DIRECTORIES;
+  return ASSET_DIRECTORIES.filter(c => !V2K3_ONLY_CATEGORIES.has(c));
+}
