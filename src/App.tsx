@@ -18,7 +18,7 @@ import type { BatchAction } from './components/BatchModal';
 import QuickActions from './components/QuickActions';
 import FilterDropdown from './components/FilterDropdown';
 import TaskPanel from './components/TaskPanel';
-import type { AssetReference } from './types/index';
+import type { AssetAnalysis, AssetFile, AssetReference, ProjectGameData } from './types/index';
 import { initBuiltinRtp, getRtpBundleUrl, lookupRTPFileInfo, resolveRtpDirName, getActiveRtpKind, getActiveRtpDiskHandle } from './core/rtpIndex';
 import { CATEGORY_EXTS, getPrimaryExt, getCategories, DB_FILE_EXTS } from './scanner/assetTypes';
 
@@ -50,6 +50,15 @@ export default function App() {
     snapshots, refreshSnapshots,
     setActiveRtpSourceId,
   } = useStore();
+
+  /** 重新扫描磁盘、追踪引用、构建分析并更新状态。返回 analyses Map 供诊断使用 */
+  async function rebuildAnalyses(data: ProjectGameData, diskAssets: AssetFile[]): Promise<Map<string, AssetAnalysis>> {
+    const refs = traceAllReferences(data);
+    const { allAssets, analyses: map } = buildAnalyses(diskAssets, refs, data.engine);
+    setAssets(allAssets);
+    setAnalyses(map);
+    return map;
+  }
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
@@ -99,28 +108,25 @@ export default function App() {
       const t0 = performance.now();
       const found = await scanProjectAssets(root);
       console.log(`[性能] scanProjectAssets: ${(performance.now() - t0).toFixed(0)}ms · ${found.length} files`);
-      setAssets(found);
 
       const stems = new Set<string>();
       for (const a of found) stems.add(a.stem.toLowerCase());
 
       const t1 = performance.now();
-      const refs = traceAllReferences(data);
-      console.log(`[性能] traceAllReferences: ${(performance.now() - t1).toFixed(0)}ms · ${refs.length} refs`);
-
-      const { allAssets, analyses: map } = buildAnalyses(found, refs, data.engine);
-      setAssets(allAssets);
-      setAnalyses(map);
+      const map = await rebuildAnalyses(data, found);
+      console.log(`[性能] rebuildAnalyses: ${(performance.now() - t1).toFixed(0)}ms`);
 
       console.group('[诊断] 项目加载');
-      console.log('编码:', data.encoding, '引擎:', data.engine, '素材:', found.length, '引用:', refs.length);
+      console.log('编码:', data.encoding, '引擎:', data.engine, '素材:', found.length);
       if (data.database) {
         const sampleChars = data.database.actors?.slice(0, 5).map(a => ({ id: a.id, characterName: a.characterName, faceName: a.faceName, matchDisk: stems.has(a.characterName?.toLowerCase() ?? '') }));
         console.log('Actress 样本:', sampleChars);
+        console.log('Actress 数量:', data.database.actors?.length);
       }
-      const missingCount = Array.from(map.values()).filter(e => !e.onDisk).length;
-      const unusedCount = Array.from(map.values()).filter(e => e.onDisk && !e.inDatabase).length;
-      console.log(`磁盘=${found.length} 引用=${refs.length} 缺失=${missingCount} 未使用=${unusedCount}`);
+      const allAnalyses = Array.from(analyses.values());
+      const missingCount = allAnalyses.filter(e => !e.onDisk).length;
+      const unusedCount = allAnalyses.filter(e => e.onDisk && !e.inDatabase).length;
+      console.log(`磁盘=${found.length} 缺失=${missingCount} 未使用=${unusedCount}`);
       if (missingCount > 0) {
         console.groupCollapsed(`${missingCount} 个缺失素材`);
         for (const e of Array.from(map.values()).filter(e => !e.onDisk).slice(0, 20)) {
@@ -176,13 +182,10 @@ export default function App() {
       setGameData(newData);
 
       // 重跑引用追踪
-      const refs = traceAllReferences(newData);
       const diskOnly = assets.filter(a => a.handle !== undefined);
-      const { allAssets, analyses: map } = buildAnalyses(diskOnly, refs, newData.engine);
-      setAssets(allAssets);
-      setAnalyses(map);
+      await rebuildAnalyses(newData, diskOnly);
 
-      console.log(`[ENCODE SWITCH] → ${enc}, refs=${refs.length}`);
+      console.log(`[ENCODE SWITCH] → ${enc}`);
     } catch (e) {
       console.error('reDecode failed:', e);
     } finally {
@@ -330,10 +333,7 @@ export default function App() {
     // Refresh asset list and analyses
     try {
       const found = await scanProjectAssets(root);
-      const refs = traceAllReferences(gameData!);
-      const { allAssets, analyses: newMap } = buildAnalyses(found, refs, gameData!.engine);
-      setAssets(allAssets);
-      setAnalyses(newMap);
+      await rebuildAnalyses(gameData!, found);
     } catch (e) {
       updateTask(taskId, {
         status: 'error',
@@ -369,10 +369,7 @@ export default function App() {
       const deletedSet = new Set(result.filesDeleted);
       const newAssets = assets.filter(a => !deletedSet.has(a.path));
       const diskOnly = newAssets.filter(a => a.handle !== undefined);
-      const refs = traceAllReferences(gameData!);
-      const { allAssets, analyses: newMap } = buildAnalyses(diskOnly, refs, gameData!.engine);
-      setAssets(allAssets);
-      setAnalyses(newMap);
+      await rebuildAnalyses(gameData!, diskOnly);
       setSelectedKeys(new Set());
       setSelectedAssetKey(null);
       await refreshSnapshots(gameData!.rootHandle);
@@ -400,10 +397,7 @@ export default function App() {
       }
       const newAssets = assets.filter(a => !result.filesDeleted.includes(a.path));
       const diskOnly = newAssets.filter(a => a.handle !== undefined);
-      const refs = traceAllReferences(gameData!);
-      const { allAssets, analyses: newMap } = buildAnalyses(diskOnly, refs, gameData!.engine);
-      setAssets(allAssets);
-      setAnalyses(newMap);
+      await rebuildAnalyses(gameData!, diskOnly);
       setSelectedKeys(new Set());
       setSelectedAssetKey(null);
       await refreshSnapshots(gameData!.rootHandle);
@@ -477,11 +471,8 @@ export default function App() {
       setAssets(newAssets);
 
       // 重跑引用分析
-      const refs = traceAllReferences(gameData);
       const diskOnly = newAssets.filter(a => a.handle !== undefined);
-      const { allAssets, analyses: map } = buildAnalyses(diskOnly, refs, gameData.engine);
-      setAssets(allAssets);
-      setAnalyses(map);
+      await rebuildAnalyses(gameData, diskOnly);
 
       // 选中新 key
       const newKey = assetKey(newAsset.category, newAsset.stem);
@@ -607,10 +598,7 @@ export default function App() {
       setAssets(newAssets);
 
       const diskOnly = newAssets.filter(a => a.handle !== undefined);
-      const refs = traceAllReferences(gameData);
-      const { allAssets, analyses: newAnalyses } = buildAnalyses(diskOnly, refs, gameData.engine);
-      setAssets(allAssets);
-      setAnalyses(newAnalyses);
+      await rebuildAnalyses(gameData, diskOnly);
 
       setSelectedKeys(new Set());
       setSelectedAssetKey(null);
