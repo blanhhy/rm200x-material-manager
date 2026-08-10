@@ -19,7 +19,7 @@ function Spinner() {
 
 function PlaceholderCard({ name, hint, hintColor = 'var(--color-warning-text)' }: { name: string; hint: string; hintColor?: string }) {
   return (
-    <div className="previewPlaceholder">
+    <div className="previewSection">
       <div className="previewPlaceholderInner">
         <div className="previewPlaceholderName">{name}</div>
         <div className="previewPlaceholderHint" style={{ color: hintColor }}>{hint}</div>

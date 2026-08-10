@@ -84,7 +84,7 @@ export default function AssetDetail({
   const [editing, setEditing] = useState(false);
   const [newName, setNewName] = useState('');
 
-  if (!analysis) return <div style={{ padding: 16, color: 'var(--color-text-muted)', fontStyle: 'italic' }}>选中一个素材查看详情</div>;
+  if (!analysis) return <div className="previewNoSelection">选中一个素材查看详情</div>;
 
   const asset = analysis.asset;
 

@@ -59,9 +59,9 @@ export default function WorkspaceSelector({ onOpen, onClose, assetCount, mapCoun
               </div>
 
               <div className="wsStats">
-                <div><span className="wsStatLabel">引擎</span><br /><b>{gameData.engine === '2k' ? 'RPG Maker 2000' : 'RPG Maker 2003'}</b></div>
+                <div><span className="filterLabel">引擎</span><br /><b>{gameData.engine === '2k' ? 'RPG Maker 2000' : 'RPG Maker 2003'}</b></div>
                 <div>
-                  <span className="wsStatLabel">编码</span><br />
+                  <span className="filterLabel">编码</span><br />
                   <select value={gameData.encoding} onChange={e => { onEncodingChange(e.target.value); }} className="wsEncSelect">
                     <option value="shift_jis">Shift_JIS</option>
                     <option value="gbk">GBK</option>
@@ -70,10 +70,10 @@ export default function WorkspaceSelector({ onOpen, onClose, assetCount, mapCoun
                     <option value="latin1">Latin-1</option>
                   </select>
                 </div>
-                <div><span className="wsStatLabel">素材总数</span><br /><b>{assetCount}</b></div>
-                <div><span className="wsStatLabel">地图数</span><br /><b>{mapCount}</b></div>
-                <div><span className="wsStatLabel">角色数</span><br /><b>{gameData.database?.actors?.length ?? 0}</b></div>
-                <div><span className="wsStatLabel">数据库</span><br /><b>{(gameData.database ? '已加载' : '\u2014')}</b></div>
+                <div><span className="filterLabel">素材总数</span><br /><b>{assetCount}</b></div>
+                <div><span className="filterLabel">地图数</span><br /><b>{mapCount}</b></div>
+                <div><span className="filterLabel">角色数</span><br /><b>{gameData.database?.actors?.length ?? 0}</b></div>
+                <div><span className="filterLabel">数据库</span><br /><b>{(gameData.database ? '已加载' : '\u2014')}</b></div>
               </div>
 
               <div className="wsMenuActions">

@@ -229,7 +229,7 @@ export default function App() {
               {snapshots.length > 0 && <span className="snapBadge">{snapshots.length}</span>}
             </button>
             {snapMenuOpen && (
-              <div className="popupMenu">
+              <div className="popupMenu" style={{ minWidth: 280, maxWidth: 340, maxHeight: 340, overflowY: 'auto' }}>
                 {snapshots.length === 0 ? (
                   <div className="popupMenuEmpty">暂无快照。</div>
                 ) : (
@@ -290,7 +290,7 @@ export default function App() {
                 <FilterDropdown value={filterUsed} onChange={(f) => { setFilterUsed(f); setSelectedKeys(new Set()); }} disabled={!gameData} />
                 <span className="filterCount">{filteredAssets.length} 项</span>
                 {gameData && filteredAssets.length > 0 && selectedKeys.size === 0 && (
-                  <button onClick={selectAllFiltered} className="btnSmPrimary" title="全选当前筛选结果">选择</button>
+                  <button onClick={selectAllFiltered} className="btnSm" title="全选当前筛选结果">选择</button>
                 )}
               </div>
               {gameData && filteredAssets.length > 0 && selectedKeys.size > 0 && (
