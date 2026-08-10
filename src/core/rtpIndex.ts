@@ -1,6 +1,7 @@
 import iconv from 'iconv-lite';
 import type { AssetCategory, EngineVersion } from '../types/index';
 import { getPrimaryExt } from '../scanner/assetTypes';
+import { ASSET_DIRECTORIES } from '../scanner/assetTypes';
 import mappingData from './rtp-data/rtp-mapping.json';
 import rtpFilesData from './rtp-data/rtp-files.json';
 
@@ -322,11 +323,8 @@ export function getRtpBundleUrl(
 
 // ── Disk RTP scanning ───────────────────────────────────────────────
 
-const KNOWN_RTP_DIRS = new Set([
-  'backdrop', 'battle', 'battle2', 'battlecharset', 'battleweapon',
-  'charset', 'chipset', 'faceset', 'gameover', 'monster',
-  'music', 'panorama', 'picture', 'sound', 'system', 'system2', 'title',
-]);
+// Valid RTP subdirectory names (derived from ASSET_DIRECTORIES, lowercased)
+const KNOWN_RTP_DIRS = new Set(ASSET_DIRECTORIES.map(d => d.toLowerCase()));
 
 /** Get the actual disk directory name for a given rtpDir (lowercase) */
 export function resolveRtpDirName(rtpDir: string): string | null {
