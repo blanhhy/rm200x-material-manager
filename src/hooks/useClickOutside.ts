@@ -8,7 +8,10 @@ import { useEffect, useRef } from 'react';
 export function useClickOutside(onClickOutside: () => void, deps: unknown[] = []) {
   const ref = useRef<HTMLDivElement>(null);
   const cbRef = useRef(onClickOutside);
-  cbRef.current = onClickOutside;
+
+  useEffect(() => {
+    cbRef.current = onClickOutside;
+  }, [onClickOutside]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
