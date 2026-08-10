@@ -24,7 +24,7 @@ interface Props { tasks: BackgroundTask[]; onClearCompleted: () => void; }
 
 export default function TaskPanel({ tasks, onClearCompleted }: Props) {
   const [open, setOpen] = useState(false);
-  const panelRef = useClickOutside(() => setOpen(false), [open]);
+  const panelRef = useClickOutside(() => setOpen(false));
 
   const running = tasks.filter(t => t.status === 'running' || t.status === 'pending');
   const done = tasks.filter(t => t.status === 'success' || t.status === 'error');

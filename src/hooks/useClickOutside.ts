@@ -3,9 +3,9 @@ import { useEffect, useRef } from 'react';
 /**
  * 点击组件外部时触发回调。
  * 用法：<div ref={useClickOutside(() => setOpen(false))}>...
- * 用 ref 保存最新回调，避免因闭包过期导致调用旧版本的回调函数。
+ * 用 ref 保存最新回调，事件监听器只注册一次，无闭包过期问题。
  */
-export function useClickOutside(onClickOutside: () => void, deps: unknown[] = []) {
+export function useClickOutside(onClickOutside: () => void) {
   const ref = useRef<HTMLDivElement>(null);
   const cbRef = useRef(onClickOutside);
 
@@ -19,7 +19,6 @@ export function useClickOutside(onClickOutside: () => void, deps: unknown[] = []
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
+  }, []);
   return ref;
 }
