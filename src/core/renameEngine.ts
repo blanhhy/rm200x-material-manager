@@ -1,12 +1,13 @@
-import iconv from 'iconv-lite';
 import {
   encodeDatabase,
   encodeMapUnit,
   encodeTreeMap,
 } from 'rpgrt';
-import type { Database, MapUnit, TreeMap, Transcoder, MapInfo } from 'rpgrt';
+import { MoveCommandCode } from 'rpgrt';
+import type { Database, MapUnit, TreeMap, MapInfo } from 'rpgrt';
 import type { AssetCategory, AssetFile, ProjectGameData } from '../types/index';
 import { createSnapshot } from './snapshot';
+import { makeTranscoder, writeFile, refCatForEventCode, SYSTEM_PICTURE_FIELDS, SYSTEM_MUSIC_FIELDS, SYSTEM_SOUND_FIELDS, SYSTEM_VEHICLE_FIELDS } from './sharedEngine';
 
 export interface RenameResult {
   success: boolean;
@@ -15,9 +16,6 @@ export interface RenameResult {
   filesRenamed: string[];
 }
 
-function matchesRefCategory(refCat: AssetCategory, assetCat: AssetCategory): boolean {
-  return refCat === assetCat;
-}
 
 function renameString<T extends string | undefined | null>(val: T, oldName: string, newName: string): T {
   if (val != null && (val as string).trim().toLowerCase() === oldName.trim().toLowerCase()) return newName as unknown as T;
@@ -32,7 +30,7 @@ export function applyRenameToDatabase(
 ): boolean {
   let changed = false;
   const check = (val: string | undefined | null, refCat: AssetCategory, set: (v: string) => void) => {
-    if (!matchesRefCategory(refCat, assetCat)) return;
+    if (refCat !== assetCat) return;
     if (val == null) return;
     const renamed = renameString(val, oldName, newName);
     if (renamed !== val) { set(renamed as string); changed = true; }
@@ -40,22 +38,18 @@ export function applyRenameToDatabase(
 
   const sys = db.system as unknown as Record<string, unknown> | undefined;
   if (sys) {
-    const pictureFields = ['titleName', 'gameoverName', 'systemName', 'system2Name', 'frameName', 'battletestBackground'];
-    for (const f of pictureFields) {
+    for (const f of SYSTEM_PICTURE_FIELDS) {
       check(sys[f] as string | undefined, assetCat, v => { sys[f] = v; });
     }
-    const musicFields = ['titleMusic','battleMusic','battleEndMusic','innMusic','boatMusic','shipMusic','airshipMusic','gameoverMusic'];
-    for (const f of musicFields) {
+    for (const f of SYSTEM_MUSIC_FIELDS) {
       const m = sys[f] as { name?: string } | undefined;
       if (m?.name) check(m.name, 'Music', v => { m.name = v; });
     }
-    const seFields = ['cursorSe','decisionSe','cancelSe','buzzerSe','battleSe','escapeSe','enemyAttackSe','enemyDamagedSe','actorDamagedSe','dodgeSe','enemyDeathSe','itemSe'];
-    for (const f of seFields) {
+    for (const f of SYSTEM_SOUND_FIELDS) {
       const s = sys[f] as { name?: string } | undefined;
       if (s?.name) check(s.name, 'Sound', v => { s.name = v; });
     }
-    const vehicleFields = ['boatName', 'shipName', 'airshipName'];
-    for (const f of vehicleFields) {
+    for (const f of SYSTEM_VEHICLE_FIELDS) {
       check(sys[f] as string | undefined, 'CharSet', v => { sys[f] = v; });
     }
   }
@@ -103,7 +97,7 @@ export function applyRenameToDatabase(
 
   function renameCmdString(cmd: { code: number; string?: string }) {
     const refCat = refCatForEventCode(cmd.code);
-    if (refCat && matchesRefCategory(refCat, assetCat) && cmd.string !== undefined) {
+    if (refCat && refCat === assetCat && cmd.string !== undefined) {
       const renamed = renameString(cmd.string, oldName, newName);
       if (renamed !== cmd.string) { cmd.string = renamed; changed = true; }
     }
@@ -122,26 +116,6 @@ export function applyRenameToDatabase(
   return changed;
 }
 
-function refCatForEventCode(code: number): AssetCategory | null {
-  switch (code) {
-    case 10130: return 'FaceSet';
-    case 10630: return 'CharSet';
-    case 10640: return 'FaceSet';
-    case 10650: return 'CharSet';
-    case 10660: return 'Music';
-    case 10670: return 'Sound';
-    case 10680: return 'System';
-    case 10690: return 'System';
-    case 11110: return 'Picture';
-    case 11510: return 'Music';
-    case 11550: return 'Sound';
-    case 11560: return 'Movie';
-    case 11720: return 'Panorama';
-    case 13210: return 'Backdrop';
-    default: return null;
-  }
-}
-
 export function applyRenameToMapUnit(
   mu: MapUnit,
   assetCat: AssetCategory,
@@ -151,7 +125,7 @@ export function applyRenameToMapUnit(
   let changed = false;
 
   const check = (val: string | undefined | null, refCat: AssetCategory, set: (v: string) => void) => {
-    if (!matchesRefCategory(refCat, assetCat)) return;
+    if (refCat !== assetCat) return;
     if (val == null) return;
     const renamed = renameString(val, oldName, newName);
     if (renamed !== val) { set(renamed as string); changed = true; }
@@ -165,15 +139,15 @@ export function applyRenameToMapUnit(
 
       for (const cmd of page.eventCommands ?? []) {
         const refCat = refCatForEventCode(cmd.code);
-        if (refCat && matchesRefCategory(refCat, assetCat) && cmd.string !== undefined) {
+        if (refCat === assetCat && cmd.string !== undefined) {
           const renamed = renameString(cmd.string, oldName, newName);
           if (renamed !== cmd.string) { cmd.string = renamed; changed = true; }
         }
       }
 
       for (const mc of page.moveRoute?.moveCommands ?? []) {
-        if ((mc.commandId === 34 && assetCat === 'CharSet' && mc.parameterString) ||
-            (mc.commandId === 35 && assetCat === 'Sound' && mc.parameterString)) {
+        if ((mc.commandId === MoveCommandCode.changeGraphic && assetCat === 'CharSet' && mc.parameterString) ||
+            (mc.commandId === MoveCommandCode.playSoundEffect && assetCat === 'Sound' && mc.parameterString)) {
           const renamed = renameString(mc.parameterString, oldName, newName);
           if (renamed !== mc.parameterString) { mc.parameterString = renamed; changed = true; }
         }
@@ -208,24 +182,6 @@ export function applyRenameToMapInfo(
   }
 
   return changed;
-}
-
-function makeTranscoder(enc: string): Transcoder {
-  const map: Record<string, string> = {
-    latin1: 'latin1', gbk: 'gbk', shift_jis: 'shift_jis', euc_jp: 'eucjp', utf8: 'utf8',
-  };
-  const target = map[enc] ?? enc;
-  return {
-    decode(bytes: Uint8Array): string { return iconv.decode(bytes, target); },
-    encode(str: string): Uint8Array { return new Uint8Array(iconv.encode(str, target)); },
-  };
-}
-
-async function writeFile(root: FileSystemDirectoryHandle, fileName: string, data: Uint8Array) {
-  const handle = await root.getFileHandle(fileName, { create: true });
-  const writable = await handle.createWritable();
-  await writable.write(data as unknown as ArrayBuffer);
-  await writable.close();
 }
 
 export async function renameAsset(

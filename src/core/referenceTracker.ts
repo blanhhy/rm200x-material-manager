@@ -10,7 +10,7 @@ import type {
 } from 'rpgrt';
 import { EventCommandCode, MoveCommandCode } from 'rpgrt';
 import type { AssetCategory, AssetReference, ReferenceLocation, ProjectGameData } from '../types/index';
-import { makeTranscoder } from './lcfLoader';
+import { makeTranscoder } from './sharedEngine';
 
 const UNKNOWN_NAMES = new Set(['', '(OFF)']);
 
@@ -47,10 +47,7 @@ function validIdx(idx: number, arr: { length: number }): boolean {
   return idx >= 0 && idx < arr.length;
 }
 
-// DB animations[].animationName 是动画帧图片名
-// EasyRPG Player: 先找 Battle2/，fallback Battle/
-// 我们记录两次引用——但引用只能指向一个 category
-// 简化：记录为 'Battle'，删除/重命名时也处理 Battle2
+// anim.animationName 指向 Battle/ 或 Battle2/，由 anim.large 决定
 function traceAnimFrames(db: Database, refs: AssetReference[], idx: number, loc: ReferenceLocation) {
   if (validIdx(idx, db.animations ?? [])) {
     const anim = db.animations[idx];
@@ -188,9 +185,6 @@ type CmdTraceCtx =
   | { kind: 'common'; loc: CommonEventLoc; db: Database; decodeStr: (bytes: number[]) => string }
   | { kind: 'troop'; loc: TroopPageLoc; db: Database; decodeStr: (bytes: number[]) => string };
 
-function resolveCmdLoc(ctx: CmdTraceCtx): ReferenceLocation {
-  return ctx.loc;
-}
 
 function traceSystem(sys: System, refs: AssetReference[]) {
   // 载具用 CharSet
@@ -355,7 +349,7 @@ function traceEventCommands(
   ctx: CmdTraceCtx,
 ) {
   const db = ctx.db;
-  const baseLoc = resolveCmdLoc(ctx);
+  const baseLoc = ctx.loc;
   const arr = cmds ?? [];
   for (let i = 0; i < arr.length; i++) {
     const cmd = arr[i];
@@ -476,10 +470,13 @@ interface InlineMoveCommand {
   parameterString: string | null;
 }
 
+/** MoveEvent 参数中内联 MoveCommand 数据的起始偏移（前面 4 个参数是事件目标描述符） */
+const MOVE_EVENT_PARAMS_HEADER = 4;
+
 function parseMoveCommandsFromParams(
   params: number[],
   decodeStr: (bytes: number[]) => string,
-  startOffset = 4,
+  startOffset = MOVE_EVENT_PARAMS_HEADER,
 ): InlineMoveCommand[] {
   const cmds: InlineMoveCommand[] = [];
   let i = startOffset;

@@ -67,7 +67,3 @@ export async function scanProjectAssets(root: FileSystemDirectoryHandle): Promis
 
   return assets;
 }
-
-export function findAssetByName(assets: AssetFile[], stem: string, category?: AssetCategory): AssetFile | undefined {
-  return assets.find(a => a.stem.toLowerCase() === stem.toLowerCase() && (category === undefined || a.category === category));
-}

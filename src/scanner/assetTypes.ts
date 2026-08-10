@@ -46,10 +46,6 @@ export const CATEGORY_EXTS: Record<AssetCategory, string[]> = {
   Movie:        ['.avi', '.mpg', '.mpeg'],
 };
 
-export function matchesCategory(ext: string, category: AssetCategory): boolean {
-  return CATEGORY_EXTS[category].includes(ext.toLowerCase());
-}
-
 /** 取类别的首选扩展名（列表第一项） */
 export function getPrimaryExt(category: AssetCategory): string {
   return CATEGORY_EXTS[category][0];

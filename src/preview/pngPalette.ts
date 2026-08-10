@@ -68,7 +68,7 @@ export function parsePNG(buf: Uint8Array): { chunks: PNGChunk[]; ihdr: IHDR | nu
   return { chunks, ihdr, ok: true };
 }
 
-export function buildPNG(chunks: PNGChunk[]): Uint8Array {
+function buildPNG(chunks: PNGChunk[]): Uint8Array {
   let total = 8;
   for (const ch of chunks) total += 12 + ch.data.length;
   const out = new Uint8Array(total);
@@ -186,7 +186,7 @@ function filterRow(row: Uint8Array, prev: Uint8Array | null, filterType: number,
   return out;
 }
 
-export function decodeIndexedPixels(buf: Uint8Array): { pixels: Uint8Array; ihdr: IHDR } | null {
+function decodeIndexedPixels(buf: Uint8Array): { pixels: Uint8Array; ihdr: IHDR } | null {
   const { chunks, ihdr, ok } = parsePNG(buf);
   if (!ok || !ihdr || ihdr.colorType !== 3) return null;
 
@@ -231,7 +231,7 @@ export function decodeIndexedPixels(buf: Uint8Array): { pixels: Uint8Array; ihdr
   return { pixels, ihdr };
 }
 
-export function encodeIndexedPixelsToIDAT(pixels: Uint8Array, ihdr: IHDR): Uint8Array {
+function encodeIndexedPixelsToIDAT(pixels: Uint8Array, ihdr: IHDR): Uint8Array {
   if (ihdr.width <= 0 || ihdr.height <= 0) return new Uint8Array();
   if (ihdr.width > 0x10000 || ihdr.height > 0x10000) return new Uint8Array();
 
@@ -256,32 +256,6 @@ export function encodeIndexedPixelsToIDAT(pixels: Uint8Array, ihdr: IHDR): Uint8
   }
 
   return pako.deflate(raw);
-}
-
-// ===== Public operations =====
-
-export function setPalette0Color(buf: Uint8Array, r: number, g: number, b: number): Uint8Array {
-  try {
-    const { chunks, ok } = parsePNG(buf);
-    if (!ok) return buf;
-    const plte = chunks.find(c => c.type === 'PLTE');
-    if (!plte || plte.data.length < 3) return buf;
-
-    const newPlteData = new Uint8Array(plte.data);
-    newPlteData[0] = r; newPlteData[1] = g; newPlteData[2] = b;
-    plte.data = newPlteData;
-
-    const trns = chunks.find(c => c.type === 'tRNS');
-    if (trns && trns.data.length > 0) {
-      const newTrns = new Uint8Array(trns.data);
-      newTrns[0] = 255;
-      trns.data = newTrns;
-    }
-
-    return buildPNG(chunks);
-  } catch {
-    return buf;
-  }
 }
 
 export function swapPalette0WithRGB(buf: Uint8Array, targetR: number, targetG: number, targetB: number): Uint8Array {

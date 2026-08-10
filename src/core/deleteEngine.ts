@@ -1,14 +1,15 @@
-import iconv from 'iconv-lite';
 import {
   encodeDatabase,
   encodeMapUnit,
   encodeTreeMap,
 } from 'rpgrt';
-import type { Database, MapUnit, TreeMap, Transcoder, MapInfo } from 'rpgrt';
+import { MoveCommandCode } from 'rpgrt';
+import type { Database, MapUnit, TreeMap, MapInfo } from 'rpgrt';
 import type { AssetCategory, AssetFile, ProjectGameData } from '../types/index';
 import { createSnapshot } from './snapshot';
 import { useStore } from '../store/useStore';
 import { prefetchedFileData } from '../scanner/assetScanner';
+import { makeTranscoder, writeFile, refCatForEventCode, SYSTEM_MUSIC_FIELDS, SYSTEM_SOUND_FIELDS, SYSTEM_VEHICLE_FIELDS } from './sharedEngine';
 
 export interface DeleteResult {
   success: boolean;
@@ -16,26 +17,6 @@ export interface DeleteResult {
   filesWritten: string[];
   filesDeleted: string[];
   deletedBlobs?: Map<string, Blob>;
-}
-
-function refCatForEventCode(code: number): AssetCategory | null {
-  switch (code) {
-    case 10130: return 'FaceSet';
-    case 10630: return 'CharSet';
-    case 10640: return 'FaceSet';
-    case 10650: return 'CharSet';
-    case 10660: return 'Music';
-    case 10670: return 'Sound';
-    case 10680: return 'System';
-    case 10690: return 'System';
-    case 11110: return 'Picture';
-    case 11510: return 'Music';
-    case 11550: return 'Sound';
-    case 11560: return 'Movie';
-    case 11720: return 'Panorama';
-    case 13210: return 'Backdrop';
-    default: return null;
-  }
 }
 
 function groupNamesByCategory(assets: AssetFile[]): Map<AssetCategory, Set<string>> {
@@ -67,22 +48,19 @@ function dbReferencesCategory(db: Database, namesByCat: Map<AssetCategory, Set<s
       if (matchesAny(v, namesByCat.get('Backdrop')!)) return true;
     }
     if (categories.has('Music')) {
-      const musicFields = ['titleMusic','battleMusic','battleEndMusic','innMusic','boatMusic','shipMusic','airshipMusic','gameoverMusic'];
-      for (const f of musicFields) {
+      for (const f of SYSTEM_MUSIC_FIELDS) {
         const m = sys[f] as { name?: string } | undefined;
         if (matchesAny(m?.name, namesByCat.get('Music')!)) return true;
       }
     }
     if (categories.has('Sound')) {
-      const seFields = ['cursorSe','decisionSe','cancelSe','buzzerSe','battleSe','escapeSe','enemyAttackSe','enemyDamagedSe','actorDamagedSe','dodgeSe','enemyDeathSe','itemSe'];
-      for (const f of seFields) {
+      for (const f of SYSTEM_SOUND_FIELDS) {
         const s = sys[f] as { name?: string } | undefined;
         if (matchesAny(s?.name, namesByCat.get('Sound')!)) return true;
       }
     }
     if (categories.has('CharSet')) {
-      const vehicleFields = ['boatName', 'shipName', 'airshipName'];
-      for (const f of vehicleFields) if (matchesAny(sys[f] as string | undefined, namesByCat.get('CharSet')!)) return true;
+      for (const f of SYSTEM_VEHICLE_FIELDS) if (matchesAny(sys[f] as string | undefined, namesByCat.get('CharSet')!)) return true;
     }
   }
 
@@ -190,18 +168,15 @@ export function applyClearToDatabase(
   if (sys) {
     const pictureFields = ['titleName', 'gameoverName', 'systemName', 'system2Name', 'frameName', 'battletestBackground'];
     for (const f of pictureFields) check(sys[f] as string | undefined, f === 'battletestBackground' ? 'Backdrop' : 'System', v => { sys[f] = v; });
-    const musicFields = ['titleMusic','battleMusic','battleEndMusic','innMusic','boatMusic','shipMusic','airshipMusic','gameoverMusic'];
-    for (const f of musicFields) {
+    for (const f of SYSTEM_MUSIC_FIELDS) {
       const m = sys[f] as { name?: string } | undefined;
       if (m?.name) check(m.name, 'Music', v => { m.name = v; });
     }
-    const seFields = ['cursorSe','decisionSe','cancelSe','buzzerSe','battleSe','escapeSe','enemyAttackSe','enemyDamagedSe','actorDamagedSe','dodgeSe','enemyDeathSe','itemSe'];
-    for (const f of seFields) {
+    for (const f of SYSTEM_SOUND_FIELDS) {
       const s = sys[f] as { name?: string } | undefined;
       if (s?.name) check(s.name, 'Sound', v => { s.name = v; });
     }
-    const vehicleFields = ['boatName', 'shipName', 'airshipName'];
-    for (const f of vehicleFields) check(sys[f] as string | undefined, 'CharSet', v => { sys[f] = v; });
+    for (const f of SYSTEM_VEHICLE_FIELDS) check(sys[f] as string | undefined, 'CharSet', v => { sys[f] = v; });
   }
 
   for (const actor of db.actors ?? []) {
@@ -287,9 +262,9 @@ export function applyClearToMapUnit(
       const soundNames = namesByCat.get('Sound');
       if (charsetNames || soundNames) {
         for (const mc of page.moveRoute?.moveCommands ?? []) {
-          if (mc.commandId === 34 && charsetNames && mc.parameterString && charsetNames.has(mc.parameterString.trim().toLowerCase())) {
+          if (mc.commandId === MoveCommandCode.changeGraphic && charsetNames && mc.parameterString && charsetNames.has(mc.parameterString.trim().toLowerCase())) {
             mc.parameterString = ''; changed = true;
-          } else if (mc.commandId === 35 && soundNames && mc.parameterString && soundNames.has(mc.parameterString.trim().toLowerCase())) {
+          } else if (mc.commandId === MoveCommandCode.playSoundEffect && soundNames && mc.parameterString && soundNames.has(mc.parameterString.trim().toLowerCase())) {
             mc.parameterString = ''; changed = true;
           }
         }
@@ -349,8 +324,8 @@ function mapReferencesCategory(mu: MapUnit, namesByCat: Map<AssetCategory, Set<s
       const soundNames = namesByCat.get('Sound');
       if (charsetNames || soundNames) {
         for (const mc of page.moveRoute?.moveCommands ?? []) {
-          if (mc.commandId === 34 && charsetNames && matchesAny(mc.parameterString, charsetNames)) return true;
-          if (mc.commandId === 35 && soundNames && matchesAny(mc.parameterString, soundNames)) return true;
+          if (mc.commandId === MoveCommandCode.changeGraphic && charsetNames && matchesAny(mc.parameterString, charsetNames)) return true;
+          if (mc.commandId === MoveCommandCode.playSoundEffect && soundNames && matchesAny(mc.parameterString, soundNames)) return true;
         }
       }
     }
@@ -367,24 +342,6 @@ function mapInfoReferencesCategory(mi: MapInfo, namesByCat: Map<AssetCategory, S
     if (matchesAny(mi.backgroundName, namesByCat.get('Picture')!)) return true;
   }
   return false;
-}
-
-function makeTranscoder(enc: string): Transcoder {
-  const map: Record<string, string> = {
-    latin1: 'latin1', gbk: 'gbk', shift_jis: 'shift_jis', euc_jp: 'eucjp', utf8: 'utf8',
-  };
-  const target = map[enc] ?? enc;
-  return {
-    decode(bytes: Uint8Array): string { return iconv.decode(bytes, target); },
-    encode(str: string): Uint8Array { return new Uint8Array(iconv.encode(str, target)); },
-  };
-}
-
-async function writeFile(root: FileSystemDirectoryHandle, fileName: string, data: Uint8Array) {
-  const handle = await root.getFileHandle(fileName, { create: true });
-  const writable = await handle.createWritable();
-  await writable.write(data as unknown as ArrayBuffer);
-  await writable.close();
 }
 
 export async function deleteAssets(
