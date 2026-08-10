@@ -40,9 +40,10 @@ function makeClearChecker(namesByCat: Map<AssetCategory, Set<string>>): { checke
   let changed = false;
   const checker: FieldChecker = (val, cat, set) => {
     const names = namesByCat.get(cat);
-    if (!names || !names.has(val!.trim().toLowerCase())) return;
+    if (!names || !names.has(val!.trim().toLowerCase())) return false;
     set('');
     changed = true;
+    return false;
   };
   return { checker, get changed() { return changed; } };
 }

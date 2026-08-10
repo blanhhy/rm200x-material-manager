@@ -25,9 +25,10 @@ function renameString<T extends string | undefined | null>(val: T, oldName: stri
 function makeRenameChecker(assetCat: AssetCategory, oldName: string, newName: string): { checker: FieldChecker; changed: boolean } {
   let changed = false;
   const checker: FieldChecker = (val, cat, set) => {
-    if (cat !== assetCat) return;
+    if (cat !== assetCat) return false;
     const renamed = renameString(val, oldName, newName);
     if (renamed !== val) { set(renamed as string); changed = true; }
+    return false;
   };
   return { checker, get changed() { return changed; } };
 }
