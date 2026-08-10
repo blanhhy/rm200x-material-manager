@@ -1,7 +1,7 @@
 import { MoveCommandCode } from 'rpgrt';
 import type { Database, MapUnit, MapInfo } from 'rpgrt';
 import type { AssetCategory } from '../types/index';
-import { refCatForEventCode, SYSTEM_PICTURE_FIELDS, SYSTEM_MUSIC_FIELDS, SYSTEM_SOUND_FIELDS, SYSTEM_VEHICLE_FIELDS } from './sharedEngine';
+import { refCatForEventCode, SYSTEM_MUSIC_FIELDS, SYSTEM_SOUND_FIELDS, SYSTEM_VEHICLE_FIELDS } from './sharedEngine';
 
 /**
  * DB 字段遍历回调。
@@ -24,8 +24,13 @@ export function traverseDatabase(db: Database, checker: FieldChecker): boolean {
   // ── System ──
   const sys = db.system as unknown as Record<string, unknown> | undefined;
   if (sys) {
-    for (const f of SYSTEM_PICTURE_FIELDS)
-      visit(sys[f] as string | undefined, f === 'battletestBackground' ? 'Backdrop' : 'System', v => { sys[f] = v; });
+    // Picture fields — each has its own category (matching referenceTracker.ts)
+    visit(sys['titleName'] as string | undefined, 'Title', v => { sys['titleName'] = v; });
+    visit(sys['gameoverName'] as string | undefined, 'GameOver', v => { sys['gameoverName'] = v; });
+    visit(sys['systemName'] as string | undefined, 'System', v => { sys['systemName'] = v; });
+    visit(sys['system2Name'] as string | undefined, 'System2', v => { sys['system2Name'] = v; });
+    visit(sys['frameName'] as string | undefined, 'Frame', v => { sys['frameName'] = v; });
+    visit(sys['battletestBackground'] as string | undefined, 'Backdrop', v => { sys['battletestBackground'] = v; });
     for (const f of SYSTEM_MUSIC_FIELDS) {
       const m = sys[f] as { name?: string } | undefined;
       if (m?.name) visit(m.name, 'Music', v => { m.name = v; });

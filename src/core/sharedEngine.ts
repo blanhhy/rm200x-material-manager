@@ -43,11 +43,6 @@ export function refCatForEventCode(code: number): AssetCategory | null {
   }
 }
 
-/** System 表中引用图片素材的字段 */
-export const SYSTEM_PICTURE_FIELDS = [
-  'titleName', 'gameoverName', 'systemName', 'system2Name', 'frameName', 'battletestBackground',
-];
-
 /** System 表中引用 Music 的字段 */
 export const SYSTEM_MUSIC_FIELDS = [
   'titleMusic', 'battleMusic', 'battleEndMusic', 'innMusic',
