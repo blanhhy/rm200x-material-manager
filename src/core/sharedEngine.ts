@@ -2,16 +2,10 @@ import iconv from 'iconv-lite';
 import type { Transcoder } from 'rpgrt';
 import type { AssetCategory } from '../types/index';
 
-/** 编码名到 iconv-lite 编码名的映射（仅 euc_jp 需要转换） */
-export function resolveIconvEncoding(enc: string): string {
-  return enc === 'euc_jp' ? 'eucjp' : enc;
-}
-
 export function makeTranscoder(enc: string): Transcoder {
-  const target = resolveIconvEncoding(enc);
   return {
-    decode(bytes: Uint8Array): string { return iconv.decode(bytes, target); },
-    encode(str: string): Uint8Array { return new Uint8Array(iconv.encode(str, target)); },
+    decode(bytes: Uint8Array): string { return iconv.decode(bytes, enc); },
+    encode(str: string): Uint8Array { return new Uint8Array(iconv.encode(str, enc)); },
   };
 }
 

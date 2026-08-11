@@ -586,7 +586,7 @@ export function traceAllReferences(data: ProjectGameData): AssetReference[] {
   const db = data.database;
   if (!db) return refs;
 
-  const transcoder = makeTranscoder(data.encoding as 'shift_jis' | 'gbk' | 'euc_jp' | 'utf8' | 'latin1');
+  const transcoder = makeTranscoder(data.encoding as 'shift_jis' | 'gbk' | 'eucjp' | 'utf8' | 'latin1');
   const decodeStr = (bytes: number[]) => transcoder.decode(Uint8Array.from(bytes));
 
   if (db.system) traceSystem(db.system, refs);

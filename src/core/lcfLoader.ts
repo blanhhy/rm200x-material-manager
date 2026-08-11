@@ -2,7 +2,7 @@ import iconv from 'iconv-lite';
 import { decodeDatabase, decodeMapUnit, decodeTreeMap, EventCommandCode } from 'rpgrt';
 import type { Database, MapUnit, MapInfo, TreeMap, EngineVersion } from 'rpgrt';
 import type { ProjectGameData, EncodingName } from '../types/index';
-import { makeTranscoder, resolveIconvEncoding } from './sharedEngine';
+import { makeTranscoder } from './sharedEngine';
 import { isCommonHanzi } from './hanziData';
 
 function readAll(handle: FileSystemFileHandle): Promise<Uint8Array> {
@@ -79,7 +79,7 @@ function scoreCharStats(text: string): CharStats {
   return { valid, other, charTotal, hasKana, hasKanji, hasPunct, commonHanzi, totalHanzi, maxHanziRun, fullKana, halfKana };
 }
 
-const CANDIDATE_ENCODINGS: EncodingName[] = ['shift_jis', 'gbk', 'euc_jp', 'utf8'];
+const CANDIDATE_ENCODINGS: EncodingName[] = ['shift_jis', 'gbk', 'eucjp', 'utf8'];
 
 /**
  * 从 DB 里提取两类字符串：
@@ -289,7 +289,7 @@ export function detectEncoding(
     let best: EncodingName = 'latin1';
     let bestBad = Infinity;
     for (const enc of CANDIDATE_ENCODINGS) {
-      const text = iconv.decode(iniBuf, resolveIconvEncoding(enc));
+      const text = iconv.decode(iniBuf, enc);
       const s = scoreCharStats(text);
       const bad = s.other + (s.charTotal === 0 ? 0 : (1 - s.valid / s.charTotal) * 5);
       if (bad < bestBad) { bestBad = bad; best = enc; }

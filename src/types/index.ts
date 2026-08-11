@@ -55,7 +55,7 @@ export type ReferenceLocation =
 import type { Database, MapUnit, MapInfo, TreeMap } from 'rpgrt';
 
 export type EngineVersion = '2k' | '2k3';
-export type EncodingName = 'shift_jis' | 'gbk' | 'euc_jp' | 'utf8' | 'latin1';
+export type EncodingName = 'shift_jis' | 'gbk' | 'eucjp' | 'utf8' | 'latin1';
 
 export interface ProjectGameData {
   rootHandle: FileSystemDirectoryHandle;

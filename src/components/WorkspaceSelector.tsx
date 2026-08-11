@@ -65,7 +65,7 @@ export default function WorkspaceSelector({ onOpen, onClose, assetCount, mapCoun
                   <select value={gameData.encoding} onChange={e => { onEncodingChange(e.target.value); }} className="wsEncSelect">
                     <option value="shift_jis">Shift_JIS</option>
                     <option value="gbk">GBK</option>
-                    <option value="euc_jp">EUC-JP</option>
+                    <option value="eucjp">EUC-JP</option>
                     <option value="utf8">UTF-8</option>
                     <option value="latin1">Latin-1</option>
                   </select>
