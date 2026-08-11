@@ -6,9 +6,9 @@ import {
 import type { Database, MapUnit, TreeMap, MapInfo } from 'rpgrt';
 import type { AssetCategory, AssetFile, ProjectGameData } from '../types/index';
 import { createSnapshot } from './snapshot';
-import { makeTranscoder, writeFile } from './sharedEngine';
-import { traverseDatabase, traverseMapUnit, traverseMapInfo } from './dbTraversal';
-import type { FieldChecker } from './dbTraversal';
+import { makeTranscoder, writeFile } from './internal/lcfIo';
+import { traverseDatabase, traverseMapUnit, traverseMapInfo } from './internal/dbTraversal';
+import type { FieldChecker } from './internal/dbTraversal';
 
 export interface RenameResult {
   success: boolean;

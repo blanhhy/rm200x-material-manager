@@ -8,9 +8,10 @@ import type {
   Sound,
   Music,
 } from 'rpgrt';
-import { EventCommandCode, MoveCommandCode } from 'rpgrt';
+import { EventCommandCode as EventCmdCode, MoveCommandCode as MoveCmdCode } from 'rpgrt';
 import type { AssetCategory, AssetReference, ReferenceLocation, ProjectGameData } from '../types/index';
-import { makeTranscoder } from './sharedEngine';
+import { makeTranscoder } from './internal/lcfIo';
+import { SYSTEM_STRING_FIELDS, SYSTEM_AUDIO_FIELDS } from './internal/assetFieldMap';
 
 const UNKNOWN_NAMES = new Set(['', '(OFF)']);
 
@@ -147,32 +148,32 @@ function locWithSubIdx(loc: ReferenceLocation, subIdx: number): ReferenceLocatio
 }
 
 const EVENT_CMD_NAMES: Partial<Record<number, string>> = {
-  [EventCommandCode.ChangeFaceGraphic]: 'ChangeFaceGraphic',
-  [EventCommandCode.ChangeSpriteAssociation]: 'ChangeSpriteAssociation',
-  [EventCommandCode.ChangeActorFace]: 'ChangeActorFace',
-  [EventCommandCode.ChangeVehicleGraphic]: 'ChangeVehicleGraphic',
-  [EventCommandCode.ChangeSystemBGM]: 'ChangeSystemBGM',
-  [EventCommandCode.ChangeSystemSFX]: 'ChangeSystemSFX',
-  [EventCommandCode.ChangeSystemGraphics]: 'ChangeSystemGraphics',
-  [EventCommandCode.ChangeScreenTransitions]: 'ChangeScreenTransitions',
-  [EventCommandCode.ShowPicture]: 'ShowPicture',
-  [EventCommandCode.ShowBattleAnimation]: 'ShowBattleAnimation',
-  [EventCommandCode.MoveEvent]: 'MoveEvent',
-  [EventCommandCode.PlayBGM]: 'PlayBGM',
-  [EventCommandCode.PlaySound]: 'PlaySound',
-  [EventCommandCode.PlayMovie]: 'PlayMovie',
-  [EventCommandCode.ChangeMapTileset]: 'ChangeMapTileset',
-  [EventCommandCode.ChangePBG]: 'ChangePBG',
-  [EventCommandCode.ChangeBattleBG]: 'ChangeBattleBG',
-  [EventCommandCode.ShowBattleAnimationB]: 'ShowBattleAnimationB',
+  [EventCmdCode.ChangeFaceGraphic]:         'ChangeFaceGraphic',
+  [EventCmdCode.ChangeSpriteAssociation]:   'ChangeSpriteAssociation',
+  [EventCmdCode.ChangeActorFace]:           'ChangeActorFace',
+  [EventCmdCode.ChangeVehicleGraphic]:      'ChangeVehicleGraphic',
+  [EventCmdCode.ChangeSystemBGM]:           'ChangeSystemBGM',
+  [EventCmdCode.ChangeSystemSFX]:           'ChangeSystemSFX',
+  [EventCmdCode.ChangeSystemGraphics]:      'ChangeSystemGraphics',
+  [EventCmdCode.ChangeScreenTransitions]:   'ChangeScreenTransitions',
+  [EventCmdCode.ShowPicture]:               'ShowPicture',
+  [EventCmdCode.ShowBattleAnimation]:       'ShowBattleAnimation',
+  [EventCmdCode.MoveEvent]:                 'MoveEvent',
+  [EventCmdCode.PlayBGM]:                   'PlayBGM',
+  [EventCmdCode.PlaySound]:                 'PlaySound',
+  [EventCmdCode.PlayMovie]:                 'PlayMovie',
+  [EventCmdCode.ChangeMapTileset]:          'ChangeMapTileset',
+  [EventCmdCode.ChangePBG]:                 'ChangePBG',
+  [EventCmdCode.ChangeBattleBG]:            'ChangeBattleBG',
+  [EventCmdCode.ShowBattleAnimationB]:      'ShowBattleAnimationB', 
 };
 
 const MOVE_CMD_NAMES: Record<number, string> = {
   0: 'End',
-  [MoveCommandCode.changeGraphic]: 'ChangeGraphic',
-  [MoveCommandCode.playSoundEffect]: 'PlaySoundEffect',
-  [MoveCommandCode.switchOn]: 'SwitchON',
-  [MoveCommandCode.switchOff]: 'SwitchOFF',
+  [MoveCmdCode.changeGraphic]:           'ChangeGraphic',
+  [MoveCmdCode.playSoundEffect]:         'PlaySoundEffect',
+  [MoveCmdCode.switchOn]:                'SwitchON',
+  [MoveCmdCode.switchOff]:               'SwitchOFF',
 };
 
 type EventLoc = Extract<ReferenceLocation, { kind: 'Event' }>;
@@ -187,45 +188,16 @@ type CmdTraceCtx =
 
 
 function traceSystem(sys: System, refs: AssetReference[]) {
-  // 载具用 CharSet
-  for (const field of ['boatName', 'shipName', 'airshipName'] as const) {
-    const val = (sys as unknown as Record<string, string>)[field];
-    if (validName(val)) pushRef(refs, 'CharSet', val, { kind: 'System', field });
+  const rec = sys as unknown as Record<string, unknown>;
+
+  for (const [field, cat] of SYSTEM_STRING_FIELDS) {
+    const val = rec[field] as string | undefined;
+    if (validName(val)) pushRef(refs, cat, val!, { kind: 'System', field });
   }
 
-  // system 各图片字段 → 对应独立目录
-  const pictureFields: Array<[string, AssetCategory]> = [
-    ['titleName', 'Title'],
-    ['gameoverName', 'GameOver'],
-    ['systemName', 'System'],
-    ['system2Name', 'System2'],
-    ['frameName', 'Frame'],
-    ['battletestBackground', 'Backdrop'],
-  ];
-  for (const [field, cat] of pictureFields) {
-    const val = (sys as unknown as Record<string, string>)[field];
-    if (validName(val)) pushRef(refs, cat, val, { kind: 'System', field });
-  }
-
-  const musicFields = [
-    'titleMusic', 'battleMusic', 'battleEndMusic', 'innMusic',
-    'boatMusic', 'shipMusic', 'airshipMusic', 'gameoverMusic',
-  ] as const;
-  for (const field of musicFields) {
-    const m = (sys as unknown as Record<string, Music>)[field];
-    const name = fromMusic(m);
-    if (name) pushRef(refs, 'Music', name, { kind: 'System', field });
-  }
-
-  const soundFields = [
-    'cursorSe', 'decisionSe', 'cancelSe', 'buzzerSe',
-    'battleSe', 'escapeSe', 'enemyAttackSe', 'enemyDamagedSe',
-    'actorDamagedSe', 'dodgeSe', 'enemyDeathSe', 'itemSe',
-  ] as const;
-  for (const field of soundFields) {
-    const s = (sys as unknown as Record<string, Sound>)[field];
-    const name = fromSound(s);
-    if (name) pushRef(refs, 'Sound', name, { kind: 'System', field });
+  for (const [field, cat] of SYSTEM_AUDIO_FIELDS) {
+    const name = fromSound(rec[field] as Sound | undefined);
+    if (name) pushRef(refs, cat, name, { kind: 'System', field });
   }
 }
 
@@ -359,34 +331,34 @@ function traceEventCommands(
     const loc = cmdName ? locWithCmdName(locWithIdx, cmdName) : locWithIdx;
 
     switch (cmd.code) {
-      case EventCommandCode.ChangeFaceGraphic:
+      case EventCmdCode.ChangeFaceGraphic:
         if (validName(cmd.string)) pushRef(refs, 'FaceSet', cmd.string, locWithField(loc, 'ChangeFaceGraphic'));
         break;
-      case EventCommandCode.ChangeSpriteAssociation:
+      case EventCmdCode.ChangeSpriteAssociation:
         if (validName(cmd.string)) pushRef(refs, 'CharSet', cmd.string, locWithField(loc, 'ChangeSpriteAssociation'));
         break;
-      case EventCommandCode.ChangeActorFace:
+      case EventCmdCode.ChangeActorFace:
         if (validName(cmd.string)) pushRef(refs, 'FaceSet', cmd.string, locWithField(loc, 'ChangeActorFace'));
         break;
-      case EventCommandCode.ChangeVehicleGraphic:
+      case EventCmdCode.ChangeVehicleGraphic:
         if (validName(cmd.string)) pushRef(refs, 'CharSet', cmd.string, locWithField(loc, 'ChangeVehicleGraphic'));
         break;
-      case EventCommandCode.ChangeSystemBGM:
+      case EventCmdCode.ChangeSystemBGM:
         if (validName(cmd.string)) pushRef(refs, 'Music', cmd.string, locWithField(loc, 'ChangeSystemBGM'));
         break;
-      case EventCommandCode.ChangeSystemSFX:
+      case EventCmdCode.ChangeSystemSFX:
         if (validName(cmd.string)) pushRef(refs, 'Sound', cmd.string, locWithField(loc, 'ChangeSystemSFX'));
         break;
-      case EventCommandCode.ChangeSystemGraphics:
+      case EventCmdCode.ChangeSystemGraphics: 
         if (validName(cmd.string)) pushRef(refs, 'System', cmd.string, locWithField(loc, 'ChangeSystemGraphics'));
         break;
-      case EventCommandCode.ChangeScreenTransitions:
+      case EventCmdCode.ChangeScreenTransitions:
         if (validName(cmd.string)) pushRef(refs, 'System', cmd.string, locWithField(loc, 'ChangeScreenTransitions'));
         break;
-      case EventCommandCode.ShowPicture:
+      case EventCmdCode.ShowPicture:
         if (validName(cmd.string)) pushRef(refs, 'Picture', cmd.string, locWithField(loc, 'ShowPicture'));
         break;
-      case EventCommandCode.ShowBattleAnimation: {
+      case EventCmdCode.ShowBattleAnimation: {
         const animId = p[0];
         if (validIdx(animId, db.animations ?? [])) {
           const anim = db.animations[animId];
@@ -397,16 +369,16 @@ function traceEventCommands(
         }
         break;
       }
-      case EventCommandCode.PlayBGM:
+      case EventCmdCode.PlayBGM:
         if (validName(cmd.string)) pushRef(refs, 'Music', cmd.string, locWithField(loc, 'PlayBGM'));
         break;
-      case EventCommandCode.PlaySound:
+      case EventCmdCode.PlaySound:
         if (validName(cmd.string)) pushRef(refs, 'Sound', cmd.string, locWithField(loc, 'PlaySound'));
         break;
-      case EventCommandCode.PlayMovie:
+      case EventCmdCode.PlayMovie:
         if (validName(cmd.string)) pushRef(refs, 'Movie', cmd.string, locWithField(loc, 'PlayMovie'));
         break;
-      case EventCommandCode.ChangeMapTileset: {
+      case EventCmdCode.ChangeMapTileset: { 
         const csId = p[0];
         if (validIdx(csId, db.chipsets ?? [])) {
           const cs = db.chipsets[csId];
@@ -416,13 +388,13 @@ function traceEventCommands(
         }
         break;
       }
-      case EventCommandCode.ChangePBG:
+      case EventCmdCode.ChangePBG:
         if (validName(cmd.string)) pushRef(refs, 'Panorama', cmd.string, locWithField(loc, 'ChangePBG'));
         break;
-      case EventCommandCode.ChangeBattleBG:
+      case EventCmdCode.ChangeBattleBG:
         if (validName(cmd.string)) pushRef(refs, 'Backdrop', cmd.string, locWithField(loc, 'ChangeBattleBG'));
         break;
-      case EventCommandCode.ShowBattleAnimationB: {
+      case EventCmdCode.ShowBattleAnimationB: {
         const animId = p[0];
         if (validIdx(animId, db.animations ?? [])) {
           const anim = db.animations[animId];
@@ -433,14 +405,14 @@ function traceEventCommands(
         }
         break;
       }
-      case EventCommandCode.MoveEvent: {
+      case EventCmdCode.MoveEvent: {
         const inlineCmds = parseMoveCommandsFromParams(p, ctx.decodeStr);
         for (let ci = 0; ci < inlineCmds.length; ci++) {
           const mc = inlineCmds[ci];
           const mcName = MOVE_CMD_NAMES[mc.commandId] ?? `MoveCmd[${mc.commandId}]`;
-          if (mc.commandId === MoveCommandCode.changeGraphic && validName(mc.parameterString)) {
+          if (mc.commandId === MoveCmdCode.changeGraphic && validName(mc.parameterString)) {
             pushRef(refs, 'CharSet', mc.parameterString!, locWithField(locWithSubIdx(loc, ci), mcName));
-          } else if (mc.commandId === MoveCommandCode.playSoundEffect && validName(mc.parameterString)) {
+          } else if (mc.commandId === MoveCmdCode.playSoundEffect && validName(mc.parameterString)) {
             pushRef(refs, 'Sound', mc.parameterString!, locWithField(locWithSubIdx(loc, ci), mcName));
           }
         }
@@ -457,9 +429,9 @@ function traceMoveRoute(
 ) {
   for (let i = 0; i < (cmds ?? []).length; i++) {
     const mc = cmds[i];
-    if (mc.commandId === MoveCommandCode.changeGraphic && validName(mc.parameterString)) {
+    if (mc.commandId === MoveCmdCode.changeGraphic && validName(mc.parameterString)) {
       pushRef(refs, 'CharSet', mc.parameterString, { ...baseLoc, routeCmdIdx: i, field: 'ChangeGraphic' });
-    } else if (mc.commandId === MoveCommandCode.playSoundEffect && validName(mc.parameterString)) {
+    } else if (mc.commandId === MoveCmdCode.playSoundEffect && validName(mc.parameterString)) {
       pushRef(refs, 'Sound', mc.parameterString, { ...baseLoc, routeCmdIdx: i, field: 'PlaySoundEffect' });
     }
   }
@@ -485,7 +457,7 @@ function parseMoveCommandsFromParams(
     if (cmdId === 0) break;
     const mc: InlineMoveCommand = { commandId: cmdId, parameterString: null };
     switch (cmdId) {
-      case MoveCommandCode.changeGraphic: {
+      case MoveCmdCode.changeGraphic: {
         const strLen = params[i++];
         const bytes: number[] = [];
         for (let j = 0; j < strLen; j++) bytes.push(params[i++]);
@@ -493,7 +465,7 @@ function parseMoveCommandsFromParams(
         i++;
         break;
       }
-      case MoveCommandCode.playSoundEffect: {
+      case MoveCmdCode.playSoundEffect: {
         const strLen = params[i++];
         const bytes: number[] = [];
         for (let j = 0; j < strLen; j++) bytes.push(params[i++]);
@@ -501,8 +473,8 @@ function parseMoveCommandsFromParams(
         i += 3;
         break;
       }
-      case MoveCommandCode.switchOn:
-      case MoveCommandCode.switchOff:
+      case MoveCmdCode.switchOn:
+      case MoveCmdCode.switchOff:
         i++;
         break;
     }

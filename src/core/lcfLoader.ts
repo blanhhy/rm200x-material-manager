@@ -2,8 +2,8 @@ import iconv from 'iconv-lite';
 import { decodeDatabase, decodeMapUnit, decodeTreeMap, EventCommandCode } from 'rpgrt';
 import type { Database, MapUnit, MapInfo, TreeMap, EngineVersion } from 'rpgrt';
 import type { ProjectGameData, EncodingName } from '../types/index';
-import { makeTranscoder } from './sharedEngine';
-import { isCommonHanzi } from './hanziData';
+import { makeTranscoder } from './internal/lcfIo';
+import { isCommonHanzi } from './internal/hanziData';
 
 function readAll(handle: FileSystemFileHandle): Promise<Uint8Array> {
   return handle.getFile().then(f => f.arrayBuffer()).then(b => new Uint8Array(b));

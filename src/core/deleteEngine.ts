@@ -6,11 +6,10 @@ import {
 import type { Database, MapUnit, TreeMap, MapInfo } from 'rpgrt';
 import type { AssetCategory, AssetFile, ProjectGameData } from '../types/index';
 import { createSnapshot } from './snapshot';
-import { useStore } from '../store/useStore';
 import { prefetchedFileData } from '../scanner/assetScanner';
-import { makeTranscoder, writeFile } from './sharedEngine';
-import { traverseDatabase, traverseMapUnit, traverseMapInfo } from './dbTraversal';
-import type { FieldChecker } from './dbTraversal';
+import { makeTranscoder, writeFile } from './internal/lcfIo';
+import { traverseDatabase, traverseMapUnit, traverseMapInfo } from './internal/dbTraversal';
+import type { FieldChecker } from './internal/dbTraversal';
 
 export interface DeleteResult {
   success: boolean;
@@ -18,6 +17,17 @@ export interface DeleteResult {
   filesWritten: string[];
   filesDeleted: string[];
   deletedBlobs?: Map<string, Blob>;
+}
+
+/**
+ * 后台任务进度回调。core 不依赖 store / UI，
+ * 由调用方（hooks）把事件翻译成 store 的 addTask / updateTask / removeTask。
+ */
+export interface DeleteTaskReporter {
+  onStart?: (label: string) => string;   // 返回 taskId，失败回调时回传
+  onSuccess?: (taskId: string) => void;
+  onError?: (taskId: string, err: unknown) => void;
+  onSnapshotsChanged?: (root: FileSystemDirectoryHandle) => void;
 }
 
 function groupNamesByCategory(assets: AssetFile[]): Map<AssetCategory, Set<string>> {
@@ -100,6 +110,7 @@ export async function deleteAssets(
   data: ProjectGameData,
   assets: AssetFile[],
   clearReferences: boolean = false,
+  task?: DeleteTaskReporter,
 ): Promise<DeleteResult> {
   if (!data.encoding) {
     return { success: false, message: '项目编码未知', filesWritten: [], filesDeleted: [] };
@@ -254,19 +265,15 @@ export async function deleteAssets(
   console.timeEnd('[DELETE] disk-delete');
 
   if (filesToDelete.length > 0 && failedToDelete.length === 0) {
-    const taskId = useStore.getState().addTask({ label: `备份 ${filesToDelete.length} 个已删除素材` });
+    const taskId = task?.onStart?.(`备份 ${filesToDelete.length} 个已删除素材`) ?? '';
     const rootForRefresh = root;
     createSnapshot(root, [], undefined, filesToDelete, deletedBlobs).then(
       () => {
-        const store = useStore.getState();
-        store.updateTask(taskId, { status: 'success', progress: 100 });
-        store.refreshSnapshots(rootForRefresh);
-        setTimeout(() => store.removeTask(taskId), 3000);
+        if (taskId) task?.onSuccess?.(taskId);
+        task?.onSnapshotsChanged?.(rootForRefresh);
       },
       (e) => {
-        const store = useStore.getState();
-        store.updateTask(taskId, { status: 'error', message: String(e) });
-        setTimeout(() => store.removeTask(taskId), 5000);
+        if (taskId) task?.onError?.(taskId, e);
       }
     );
   }

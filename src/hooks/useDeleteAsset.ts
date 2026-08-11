@@ -37,7 +37,20 @@ export function useDeleteAsset(
     setLoading(true);
     try {
       const needClearRefs = missingOnes.length > 0;
-      const result = await deleteAssets(gameData, toDelete, needClearRefs);
+      const result = await deleteAssets(gameData, toDelete, needClearRefs, {
+        onStart: (label) => useStore.getState().addTask({ label }),
+        onSuccess: (taskId) => {
+          const store = useStore.getState();
+          store.updateTask(taskId, { status: 'success', progress: 100 });
+          setTimeout(() => store.removeTask(taskId), 3000);
+        },
+        onError: (taskId, err) => {
+          const store = useStore.getState();
+          store.updateTask(taskId, { status: 'error', message: String(err) });
+          setTimeout(() => store.removeTask(taskId), 5000);
+        },
+        onSnapshotsChanged: (root) => { void refreshSnapshots(root); },
+      });
       if (!result.success && !result.filesDeleted.length && result.filesWritten.length === 0) {
         alert('删除失败：' + result.message);
         return;
