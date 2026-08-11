@@ -24,11 +24,6 @@ export async function safeGetFileHandle(root: FileSystemDirectoryHandle, name: s
   }
 }
 
-function unescapeWindy(s: string | undefined | null): string {
-  if (!s) return '';
-  return s.replace(/u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCodePoint(parseInt(hex, 16)));
-}
-
 
 interface CharStats {
   valid: number; other: number; charTotal: number;
@@ -82,61 +77,31 @@ function scoreCharStats(text: string): CharStats {
 const CANDIDATE_ENCODINGS: EncodingName[] = ['shift_jis', 'gbk', 'eucjp', 'utf8'];
 
 /**
- * 从 DB 里提取两类字符串：
- * - fileRefs：应该匹配磁盘文件名的字段（characterName, faceName, chipsetName, BGM/SE 名...）
- * - displayTexts：纯显示文本（角色名、道具名、技能名...），用于文本质量评分
+ * 从 DB 里提取纯显示文本字符串（角色名、道具名、技能名…），用于编码文本质量评分。
+ * 注意：不包含素材文件名（characterName/faceName 等），文件名对编码推断无意义。
  */
-export function splitDbRefs(db: Database): { fileRefs: string[]; displayTexts: string[] } {
-  const fileRefs: string[] = [];
-  const displayTexts: string[] = [];
-  const pushFile = (s: string | undefined | null) => {
-    if (typeof s === 'string' && s.trim()) fileRefs.push(unescapeWindy(s.trim()));
-  };
-  const pushText = (s: string | undefined | null) => {
-    if (typeof s === 'string' && s.trim()) displayTexts.push(unescapeWindy(s.trim()));
+function collectDisplayTexts(db: Database): string[] {
+  const texts: string[] = [];
+  const push = (s: string | undefined | null) => {
+    if (typeof s === 'string' && s.trim()) texts.push(s.trim());
   };
 
   for (const a of db.actors ?? []) {
-    pushText((a as any).name);
-    pushText((a as any).title);
-    pushFile(a.characterName);
-    pushFile(a.faceName);
-    pushFile((a as any).battlerName);
+    push((a as any).name);
+    push((a as any).title);
   }
-  for (const c of (db as any).classes ?? []) pushText(c.name);
-  for (const cs of db.chipsets ?? []) pushFile(cs.chipsetName);
-  for (const sk of db.skills ?? []) pushText((sk as any).name);
-  for (const it of db.items ?? []) pushText((it as any).name);
-  for (const en of db.enemies ?? []) {
-    pushText((en as any).name);
-    pushFile((en as any).battlerName);
-  }
-  for (const st of db.states ?? []) pushText((st as any).name);
-  for (const tr of db.terrains ?? []) pushText((tr as any).name);
-  for (const at of db.attributes ?? []) pushText((at as any).name);
-  for (const an of db.animations ?? []) {
-    pushText((an as any).name);
-    pushFile((an as any).animationName);
-  }
-  for (const br of (db as any).battleranimations ?? []) pushText(br.name);
-  for (const tp of db.troops ?? []) pushText((tp as any).name);
-  for (const ce of db.commonevents ?? []) pushText((ce as any).name);
-
-  const sys = db.system as unknown as Record<string, string> | undefined;
-  if (sys) {
-    for (const k of ['titleName', 'gameoverName', 'systemName', 'system2Name']) {
-      pushFile(sys[k]);
-    }
-    pushFile(sys.frameName);
-    pushFile((sys as any).battletestBackground);
-    const bgmSeKeys = ['titleMusic','battleMusic','battleEndMusic','innMusic','boatMusic','shipMusic','airshipMusic','gameoverMusic','cursorSe','decisionSe','cancelSe','buzzerSe','battleSe','escapeSe','enemyAttackSe','enemyDamagedSe','actorDamagedSe'];
-    for (const k of bgmSeKeys) {
-      const v = (sys as any)[k];
-      if (v && typeof v === 'object') pushFile(v.name);
-      else pushFile(v);
-    }
-  }
-  return { fileRefs, displayTexts };
+  for (const c of (db as any).classes ?? []) push(c.name);
+  for (const sk of db.skills ?? []) push((sk as any).name);
+  for (const it of db.items ?? []) push((it as any).name);
+  for (const en of db.enemies ?? []) push((en as any).name);
+  for (const st of db.states ?? []) push((st as any).name);
+  for (const tr of db.terrains ?? []) push((tr as any).name);
+  for (const at of db.attributes ?? []) push((at as any).name);
+  for (const an of db.animations ?? []) push((an as any).name);
+  for (const br of (db as any).battleranimations ?? []) push(br.name);
+  for (const tp of db.troops ?? []) push((tp as any).name);
+  for (const ce of db.commonevents ?? []) push((ce as any).name);
+  return texts;
 }
 
 /**
@@ -146,18 +111,19 @@ export function splitDbRefs(db: Database): { fileRefs: string[]; displayTexts: s
 function extractMapTexts(bufs: Uint8Array[], enc: EncodingName, engine: EngineVersion): string[] {
   const t = makeTranscoder(enc);
   const texts: string[] = [];
-  // 事件命令中会包含游戏内显示文本的命令码
-  // 2k3 变体 = 对应 2k 基础值 + 10000（rpgrt 的 EventCommandCode 没有单独的 2k3 变体常量）
-  const textCodes = new Set([
-    EventCommandCode.ShowMessage,        // 10110  显示文章
-    EventCommandCode.ShowMessage + 10000, // 20110  显示文章 (2k3)
-    EventCommandCode.ShowChoice,          // 10140  显示选项
-    EventCommandCode.ShowChoice + 10000,  // 20140  显示选项 (2k3)
-    EventCommandCode.InputNumber,         // 10150  数值输入
-    EventCommandCode.ChangeHeroName,      // 10610  更改英雄名称
-    EventCommandCode.EnterHeroName,       // 10740  输入英雄名称
-    EventCommandCode.Comment,             // 12410  注释（对编码检测仍有参考价值）
-    EventCommandCode.Comment + 10000,     // 22410  注释 (2k3)
+  // 只取"游戏内显示文本"命令：地图对话、选项、需要玩家看到的提示。
+  // 注意 2xxxx 段不是"2k3 变体"——RM2k/2k3 共用同一套命令码，
+  // 2xxxx 是续行/子项标记（ShowMessage2 = 对话第 2 行起，ShowChoiceOption = 单个选项文本）。
+  // 不要收注释（Comment/Comment2）：那是开发者留给自己的备注，不是显示文本，
+  // 且常含大段 "-----" 分隔线，会稀释汉字占比、破坏编码评分。
+  const textCodes = new Set<number>([
+    EventCommandCode.ShowMessage,      // 10110  显示文章（首行）
+    EventCommandCode.ShowMessage2,     // 20110  显示文章（续行）
+    EventCommandCode.ShowChoice,       // 10140  显示选项
+    EventCommandCode.ShowChoiceOption, // 20140  单个选项文本
+    EventCommandCode.InputNumber,      // 10150  数值输入
+    EventCommandCode.ChangeHeroName,   // 10610  更改英雄名称
+    EventCommandCode.EnterHeroName,    // 10740  输入英雄名称
   ]);
   for (const buf of bufs) {
     try {
@@ -165,8 +131,9 @@ function extractMapTexts(bufs: Uint8Array[], enc: EncodingName, engine: EngineVe
       for (const ev of map.events || []) {
         // 不取 ev.name —— 那是编辑器标签(EV0001)，不是显示文本
         for (const page of ev.pages || []) {
+          // eventCommands 是扁平列表（嵌套用 indent 表达），无需递归
           for (const cmd of page.eventCommands || []) {
-            collectCmdTexts(cmd, textCodes, texts);
+            if (cmd?.string && textCodes.has(cmd.code)) texts.push(cmd.string);
           }
         }
       }
@@ -175,12 +142,33 @@ function extractMapTexts(bufs: Uint8Array[], enc: EncodingName, engine: EngineVe
   return texts;
 }
 
-function collectCmdTexts(cmd: any, textCodes: Set<number>, texts: string[]) {
-  if (!cmd) return;
-  if (cmd.string && textCodes.has(cmd.code)) texts.push(cmd.string);
-  if (cmd.eventCommands) {
-    for (const sub of cmd.eventCommands) collectCmdTexts(sub, textCodes, texts);
-  }
+/**
+ * 剥离 RM2k/2k3 消息控制码，只留真正显示给玩家的字。
+ * 控制码本身是 ASCII，留着会稀释汉字/假名占比、干扰编码评分。
+ *
+ * 依据 EasyRPG Player 的 window_message.cpp / game_message.cpp：
+ *   带参数：\c[n] 颜色  \s[n] 速度  \n[n] 角色名  \v[n] 变量  \t[n] 字符串
+ *   单字符：\\ \$ \_ \! \. \| \^ \> \<
+ *   ExFont：$A-$Z / $a-$z → 图标（非文字，不参与语言判别）
+ */
+function stripMessageCodes(s: string): string {
+  return s
+    .replace(/\\\\/g, '')                    // \\ 反斜杠字面量
+    .replace(/\\[cCsSnNvVtT]\[[^\]]*\]/g, '') // \c[n] \s[n] \n[n] \v[n] \t[n]
+    .replace(/\\[cC](?!\[)/g, '')            // 不带 [] 的 \c 退化为颜色 0
+    .replace(/\$[A-Za-z]/g, '')              // ExFont 图标
+    .replace(/\\[$!.|^><]/g, '')             // \$ \! \. \| \^ \> \<
+    .replace(/\\_/g, ' ');                   // \_ 是半角空格，保留为空格
+}
+
+/**
+ * 纯 ASCII 文本对编码判别零信息量（无高位字节，各候选编码解出的结果完全相同），
+ * 但会严重稀释汉字/假名占比 —— 典型元凶是注释里的 "------" 分隔线。
+ * 必须在评分前剔除，否则中文游戏的 hanziRatio 会被压到阈值以下。
+ */
+function hasNonAscii(s: string): boolean {
+  for (const ch of s) if (ch.codePointAt(0)! > 0x7F) return true;
+  return false;
 }
 
 function scoreEncoding(
@@ -194,13 +182,17 @@ function scoreEncoding(
     db = decodeDatabase(ldbBuf, { engine, transcoder: makeTranscoder(enc) });
   } catch { return { total: -1, reasons: ['decode failed'] }; }
 
-  let { displayTexts } = splitDbRefs(db);
+  let displayTexts = collectDisplayTexts(db);
   if (extraBufs.length > 0) {
     const extraTexts = extractMapTexts(extraBufs, enc, engine);
     if (extraTexts.length > 0) {
       displayTexts = [...displayTexts, ...extraTexts];
     }
   }
+  // 剥控制码后丢掉纯 ASCII 串：它们对编码判别零信息量，只会稀释汉字/假名占比
+  displayTexts = displayTexts
+    .map(stripMessageCodes)
+    .filter(hasNonAscii);
   const reasons: string[] = [];
   let total = 0;
 
