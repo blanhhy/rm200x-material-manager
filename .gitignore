@@ -47,6 +47,7 @@ temp-*
 verify-screenshots/
 coverage/
 *.lcov
+.encdata/
 
 # 本地参考资料（体积大，非项目源码）
 .tech_support/

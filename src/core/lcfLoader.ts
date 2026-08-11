@@ -259,11 +259,17 @@ function scoreEncoding(
           reasons.push('+jaMixedKanji');
         }
         if (s.hasPunct) { total += 10; reasons.push('+jaPunct'); }
-        // 真正日文：全角假名多；GBK错解会产生大量半角假名乱码
+        // 真日文用全角假名(U+3040-30FF)；半角假名(U+FF65-FF9F)几乎只出现在
+        // Shift_JIS 错解中文（每个汉字被拆成两个半角假名字节）。
+        // 半角占比越高越不可能是真日文，惩罚随占比急剧加大，把中文错解压成负分，
+        // 从而抵消"shift_jis 解中文仍能拿 +50 日文模式"造成的中文方向余量不足。
         const halfRatio = s.fullKana + s.halfKana > 0 ? s.halfKana / (s.fullKana + s.halfKana) : 0;
         if (halfRatio > 0.6) {
-          total -= 25;
-          reasons.push(`-fakeJaHalfKana halfKanaRatio:${halfRatio.toFixed(2)}`);
+          let penalty = 25;
+          if (halfRatio > 0.9) penalty += 45;   // 几乎全半角：必为错解，直接压负
+          else if (halfRatio > 0.8) penalty += 20;
+          total -= penalty;
+          reasons.push(`-fakeJaHalfKana halfKanaRatio:${halfRatio.toFixed(2)} penalty:${penalty}`);
         } else if (s.fullKana > 0 && s.halfKana > 0 && halfRatio < 0.3) {
           total += 5;
           reasons.push('+jaFullKanaDominant');
