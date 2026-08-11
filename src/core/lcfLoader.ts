@@ -119,8 +119,11 @@ function collectDisplayTexts(db: Database): string[] {
   for (const at of db.attributes ?? []) push((at as any).name);
   for (const an of db.animations ?? []) push((an as any).name);
   for (const br of (db as any).battleranimations ?? []) push(br.name);
-  for (const tp of db.troops ?? []) push((tp as any).name);
-  for (const ce of db.commonevents ?? []) push((ce as any).name);
+  // 敌群名(troops[].name)与公共事件名(commonevents[].name)是编辑器内部标签，
+  // 对玩家不可见，翻译器按 S_UNTRANSLATED 处理不翻译（RPGRewriter 的 Troops.cs / CommonEvents.cs）。
+  // 中文翻译游戏往往只翻译玩家可见正文、保留日文原名，这些标签常是未翻译的 Shift_JIS 残留，
+  // 若按 GBK 解会以乱码形式污染编码检测文本池，故排除。
+  // 注意：troop / commonEvent 内部的"命令文本"（战斗对话、Message 等）仍是显示文本，不受影响。
   return texts;
 }
 
@@ -259,9 +262,11 @@ function scoreEncoding(
           reasons.push('+jaMixedKanji');
         }
         if (s.hasPunct) { total += 10; reasons.push('+jaPunct'); }
-        // 真日文用全角假名(U+3040-30FF)；半角假名(U+FF65-FF9F)几乎只出现在
-        // Shift_JIS 错解中文（每个汉字被拆成两个半角假名字节）。
-        // 半角占比越高越不可能是真日文，惩罚随占比急剧加大，把中文错解压成负分，
+        // 半角假名(U+FF65-FF9F)在真实日文里也可能出现（作为点缀），但占比极低——
+        // 日文书写以全角假名(U+3040-30FF)为主体。实测真实日文 halfRatio≈0~0.07。
+        // 而 Shift_JIS 错解中文（每个汉字被拆成两个半角假名字节）时，全角假名几乎为 0、
+        // halfRatio≈1.0。因此区分二者的关键不是"有没有半角假名"，而是半角在假名总数中的占比。
+        // 半角占比越高越不可能是真日文，惩罚随占比加大，把中文错解压成负分，
         // 从而抵消"shift_jis 解中文仍能拿 +50 日文模式"造成的中文方向余量不足。
         const halfRatio = s.fullKana + s.halfKana > 0 ? s.halfKana / (s.fullKana + s.halfKana) : 0;
         if (halfRatio > 0.6) {
