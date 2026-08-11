@@ -41,6 +41,7 @@ ehthumbs.db
 *.local
 *.bak
 *.swp
+temp-*
 
 # 验证 / 测试产物
 verify-screenshots/

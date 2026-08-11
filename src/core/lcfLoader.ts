@@ -26,52 +26,72 @@ export async function safeGetFileHandle(root: FileSystemDirectoryHandle, name: s
 
 
 interface CharStats {
-  valid: number; other: number; charTotal: number;
+  // languageTotal = totalHanzi + fullKana + halfKana + other —— 语言判别的唯一分母。
+  // ASCII、标点、符号等"语言无关"字符不进入该分母，避免任何语言的通用符号稀释占比。
+  neutral: number;
+  other: number;        // 真正的乱码字节（无法归入任何语言的有效字符）
+  languageTotal: number;
   hasKana: boolean; hasKanji: boolean; hasPunct: boolean;
   commonHanzi: number; totalHanzi: number; maxHanziRun: number;
   fullKana: number; halfKana: number;
 }
 
+/**
+ * 统计文本中"有语言判别能力"的字符构成。
+ *
+ * 关键设计：语言判别只关心三类字符 —— 汉字、假名、乱码字节。
+ * 其余（ASCII 字母数字标点、全角标点、罗马数字、箭头、几何/杂项符号等）是
+ * 所有东亚语言共享的"中性"字符，对区分中/日无任何信息量，必须排除在分母之外，
+ * 否则任何语言里常见的全角符号都会把汉字/假名占比稀释到阈值以下。
+ */
 function scoreCharStats(text: string): CharStats {
-  let valid = 0, other = 0, charTotal = 0;
+  let neutral = 0, other = 0;
   let hasKana = false, hasKanji = false, hasPunct = false;
   let commonHanzi = 0, totalHanzi = 0;
   let maxHanziRun = 0, curRun = 0;
   let fullKana = 0, halfKana = 0;
 
   for (const ch of text) {
-    charTotal++;
     const cp = ch.codePointAt(0)!;
-    if (cp < 0x80) {
-      if (cp >= 0x20 && cp <= 0x7E) valid++;
-      else if (cp === 0x09 || cp === 0x0A || cp === 0x0D) valid++;
-      else { other++; curRun = 0; }
-    }
-    else if (cp >= 0x3040 && cp <= 0x30FF) {
-      valid++; hasKana = true; fullKana++; curRun = 0;
-    }
-    else if (cp >= 0x4E00 && cp <= 0x9FFF) {
-      valid++; hasKanji = true; totalHanzi++;
+
+    // ASCII（字母/数字/标点/空白）：语言无关
+    if (cp < 0x80) { neutral++; curRun = 0; continue; }
+
+    // 全角假名
+    if (cp >= 0x3040 && cp <= 0x30FF) { hasKana = true; fullKana++; curRun = 0; continue; }
+
+    // 汉字
+    if (cp >= 0x4E00 && cp <= 0x9FFF) {
+      hasKanji = true; totalHanzi++;
       if (isCommonHanzi(ch)) commonHanzi++;
       curRun++;
       if (curRun > maxHanziRun) maxHanziRun = curRun;
+      continue;
     }
-    else if (cp >= 0x3400 && cp <= 0x4DBF) {
-      other++; curRun = 0;
+
+    // 全角区：半角假名(FF65-FF9F)计入语言，其余全角标点/全角ASCII为中性
+    if (cp >= 0xFF00 && cp <= 0xFFEF) {
+      if (cp >= 0xFF65 && cp <= 0xFF9F) { halfKana++; hasKana = true; }
+      else neutral++;
+      curRun = 0; continue;
     }
-    else if (cp >= 0x3000 && cp <= 0x303F) {
-      valid++; hasPunct = true; curRun = 0;
-    }
-    else if (cp >= 0xFF00 && cp <= 0xFFEF) {
-      valid++;
-      if (cp >= 0xFF65 && cp <= 0xFF9F) halfKana++;
-      curRun = 0;
-    }
-    else if (cp >= 0x2000 && cp <= 0x206F) { valid++; curRun = 0; }
-    else { other++; curRun = 0; }
+
+    // 全角标点 / 通用标点：语言无关（所有东亚语言共用），但标记 hasPunct
+    if (cp >= 0x3000 && cp <= 0x303F) { hasPunct = true; neutral++; curRun = 0; continue; }
+    if (cp >= 0x2000 && cp <= 0x206F) { hasPunct = true; neutral++; curRun = 0; continue; }
+
+    // 常用符号区（罗马数字/箭头/数学/制表/几何/方块/杂项等）：语言无关
+    if ((cp >= 0x2150 && cp <= 0x22FF) ||
+        (cp >= 0x2500 && cp <= 0x25FF) ||
+        (cp >= 0x2600 && cp <= 0x26FF) ||
+        (cp >= 0x2B00 && cp <= 0x2BFF)) { neutral++; curRun = 0; continue; }
+
+    // 其余高位字节：真正的乱码，计入语言分母并触发惩罚
+    other++; curRun = 0;
   }
 
-  return { valid, other, charTotal, hasKana, hasKanji, hasPunct, commonHanzi, totalHanzi, maxHanziRun, fullKana, halfKana };
+  const languageTotal = totalHanzi + fullKana + halfKana + other;
+  return { neutral, other, languageTotal, hasKana, hasKanji, hasPunct, commonHanzi, totalHanzi, maxHanziRun, fullKana, halfKana };
 }
 
 const CANDIDATE_ENCODINGS: EncodingName[] = ['shift_jis', 'gbk', 'eucjp', 'utf8'];
@@ -200,10 +220,10 @@ function scoreEncoding(
     const allText = displayTexts.join(' ');
     const s = scoreCharStats(allText);
 
-    if (s.charTotal === 0) {
-      reasons.push('empty');
+    if (s.languageTotal === 0) {
+      reasons.push('no language chars');
     } else {
-      const n = s.charTotal;
+      const n = s.languageTotal;
       const hanziRatio = s.totalHanzi / n;
       const kanaRatio = (s.fullKana + s.halfKana) / n;
       const otherRatio = s.other / n;
@@ -283,7 +303,8 @@ export function detectEncoding(
     for (const enc of CANDIDATE_ENCODINGS) {
       const text = iconv.decode(iniBuf, enc);
       const s = scoreCharStats(text);
-      const bad = s.other + (s.charTotal === 0 ? 0 : (1 - s.valid / s.charTotal) * 5);
+      // 无 LDB 时仅凭 ini 探测：优先选"乱码字节最少"的编码
+      const bad = s.other;
       if (bad < bestBad) { bestBad = bad; best = enc; }
     }
     return best;
