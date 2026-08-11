@@ -123,8 +123,40 @@ function collectDisplayTexts(db: Database): string[] {
   // 对玩家不可见，翻译器按 S_UNTRANSLATED 处理不翻译（RPGRewriter 的 Troops.cs / CommonEvents.cs）。
   // 中文翻译游戏往往只翻译玩家可见正文、保留日文原名，这些标签常是未翻译的 Shift_JIS 残留，
   // 若按 GBK 解会以乱码形式污染编码检测文本池，故排除。
-  // 注意：troop / commonEvent 内部的"命令文本"（战斗对话、Message 等）仍是显示文本，不受影响。
+  // 但 troop / commonEvent 内部的"命令文本"（战斗对话、公共事件里的 Message/提示等）仍是
+  // 玩家可见的显示文本，需要纳入：公共事件常承载演出/事件手搓玩法/战斗台词，敌群页也可能有战斗旁白。
+  for (const ce of db.commonevents ?? []) {
+    collectCmdTexts((ce as any).eventCommands, texts);
+  }
+  for (const tp of db.troops ?? []) {
+    for (const page of (tp as any).pages ?? []) {
+      collectCmdTexts(page.eventCommands, texts);
+    }
+  }
   return texts;
+}
+
+/**
+ * 事件命令中"游戏内显示文本"的命令码集合。
+ * 注意 2xxxx 段不是"2k3 变体"——RM2k/2k3 共用同一套命令码，
+ * 2xxxx 是续行/子项标记（ShowMessage2 = 对话第 2 行起，ShowChoiceOption = 单个选项文本）。
+ * 不含注释（Comment/Comment2）：那是开发者备注，不是显示文本，且常含 "-----" 分隔线污染评分。
+ */
+const TEXT_CODES = new Set<number>([
+  EventCommandCode.ShowMessage,      // 10110  显示文章（首行）
+  EventCommandCode.ShowMessage2,     // 20110  显示文章（续行）
+  EventCommandCode.ShowChoice,       // 10140  显示选项
+  EventCommandCode.ShowChoiceOption, // 20140  单个选项文本
+  EventCommandCode.InputNumber,      // 10150  数值输入
+  EventCommandCode.ChangeHeroName,   // 10610  更改英雄名称
+  EventCommandCode.EnterHeroName,    // 10740  输入英雄名称
+]);
+
+/** 从扁平事件命令列表提取显示文本（eventCommands 是扁平列表，嵌套用 indent 表达，无需递归）。 */
+function collectCmdTexts(cmds: Array<{ code: number; string?: string }> | undefined, texts: string[]): void {
+  for (const cmd of cmds ?? []) {
+    if (cmd?.string && TEXT_CODES.has(cmd.code)) texts.push(cmd.string);
+  }
 }
 
 /**
@@ -134,30 +166,13 @@ function collectDisplayTexts(db: Database): string[] {
 function extractMapTexts(bufs: Uint8Array[], enc: EncodingName, engine: EngineVersion): string[] {
   const t = makeTranscoder(enc);
   const texts: string[] = [];
-  // 只取"游戏内显示文本"命令：地图对话、选项、需要玩家看到的提示。
-  // 注意 2xxxx 段不是"2k3 变体"——RM2k/2k3 共用同一套命令码，
-  // 2xxxx 是续行/子项标记（ShowMessage2 = 对话第 2 行起，ShowChoiceOption = 单个选项文本）。
-  // 不要收注释（Comment/Comment2）：那是开发者留给自己的备注，不是显示文本，
-  // 且常含大段 "-----" 分隔线，会稀释汉字占比、破坏编码评分。
-  const textCodes = new Set<number>([
-    EventCommandCode.ShowMessage,      // 10110  显示文章（首行）
-    EventCommandCode.ShowMessage2,     // 20110  显示文章（续行）
-    EventCommandCode.ShowChoice,       // 10140  显示选项
-    EventCommandCode.ShowChoiceOption, // 20140  单个选项文本
-    EventCommandCode.InputNumber,      // 10150  数值输入
-    EventCommandCode.ChangeHeroName,   // 10610  更改英雄名称
-    EventCommandCode.EnterHeroName,    // 10740  输入英雄名称
-  ]);
   for (const buf of bufs) {
     try {
       const map = decodeMapUnit(buf, { engine, transcoder: t });
       for (const ev of map.events || []) {
         // 不取 ev.name —— 那是编辑器标签(EV0001)，不是显示文本
         for (const page of ev.pages || []) {
-          // eventCommands 是扁平列表（嵌套用 indent 表达），无需递归
-          for (const cmd of page.eventCommands || []) {
-            if (cmd?.string && textCodes.has(cmd.code)) texts.push(cmd.string);
-          }
+          collectCmdTexts(page.eventCommands, texts);
         }
       }
     } catch {}
