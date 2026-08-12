@@ -89,7 +89,7 @@ export default function App() {
         setSelectedAssetKey(null);
         setAssets([]);
         setAnalyses(new Map());
-        setFilterUsed('disk');
+        //setFilterUsed('all');
         setGameData(null);
       }
       setLoading(true);
@@ -160,7 +160,7 @@ export default function App() {
 
   function handleCloseProject() {
     setGameData(null); setAssets([]); setAnalyses(new Map());
-    setSelectedAssetKey(null); setFilterUsed('disk');
+    setSelectedAssetKey(null);
   }
 
   async function handleEncodingChange(enc: string) {

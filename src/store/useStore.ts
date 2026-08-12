@@ -69,7 +69,7 @@ export const useStore = create<Store>((set, get) => ({
   setActiveCategory: (c) => set({ activeCategory: c }),
   selectedAssetKey: null,
   setSelectedAssetKey: (k) => set({ selectedAssetKey: k }),
-  filterUsed: 'disk',
+  filterUsed: 'all',
   setFilterUsed: (f) => set({ filterUsed: f }),
   activeRtpSourceId: 'builtin',
   setActiveRtpSourceId: (id) => set({ activeRtpSourceId: id }),
@@ -111,5 +111,6 @@ export const useStore = create<Store>((set, get) => ({
       console.warn('[STORE] refreshSnapshots failed', e);
     }
   },
+  //TODO: 维持当前活跃 RTP
 }));
 
