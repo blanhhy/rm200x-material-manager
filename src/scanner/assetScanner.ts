@@ -2,8 +2,6 @@ import { ASSET_DIRECTORIES, CATEGORY_EXTS } from './assetTypes';
 import type { AssetCategory, AssetFile } from '../types/index';
 import { parsePNG } from '../preview/pngPalette';
 
-const IMAGE_EXTS = new Set(['.png']);
-
 // 模块级 Map：scanner 把预读数据存这里，绕过 React/Zustand 的序列化截断
 // 存 Blob 而不是 ArrayBuffer/Uint8Array——Blob 是浏览器原生二进制封装，
 // V8 不会 detach 它的内存，跨任何函数调用都保持完整数据
@@ -56,8 +54,8 @@ export async function scanProjectAssets(root: FileSystemDirectoryHandle): Promis
         size,
         ext: c.ext,
         handle: c.fileHandle,
-      };
-      if (IMAGE_EXTS.has(c.ext)) {
+        };
+      if (c.ext === ".png") {
         const { ihdr } = parsePNG(new Uint8Array(buf));
         if (ihdr) { asset.width = ihdr.width; asset.height = ihdr.height; }
       }

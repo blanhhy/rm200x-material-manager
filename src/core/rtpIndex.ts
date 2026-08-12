@@ -21,7 +21,7 @@ interface MappingData {
 }
 
 interface RtpFiles {
-  [dirName: string]: { [category: string]: string[] };
+  [engine: string]: { [category: string]: string[] };
 }
 
 /** One RTP source's available files: rtpTableDir → Set<lowercase stem> */
@@ -31,11 +31,6 @@ export type RtpFileSet = Map<string, Set<string>>;
 
 const mapping = mappingData as unknown as MappingData;
 const rtpFiles = rtpFilesData as unknown as RtpFiles;
-
-const EN_RTP_DIR: Record<EngineVersion, string> = {
-  '2k': '2000en',
-  '2k3': '2003steam',
-};
 
 const CATEGORY_TO_RTP_DIR: Record<AssetCategory, string> = mapping.categoryToRtpDir;
 
@@ -85,8 +80,7 @@ const ROWS_2K3 = buildRowIndex(mapping.tables['2k3'].rows);
 // ── Built-in file sets ──────────────────────────────────────────────
 
 function buildBuiltinFileSet(engine: EngineVersion): RtpFileSet {
-  const enDir = EN_RTP_DIR[engine];
-  const cats = rtpFiles[enDir];
+  const cats = rtpFiles[engine];
   const fs = new Map<string, Set<string>>();
   if (cats) {
     for (const [k, fileList] of Object.entries(cats)) {
