@@ -38,10 +38,11 @@ export function applyRenameToDatabase(
   assetCat: AssetCategory,
   oldName: string,
   newName: string,
+  transcoder?: ReturnType<typeof makeTranscoder>,
 ): boolean {
-  const { checker, changed } = makeRenameChecker(assetCat, oldName, newName);
-  traverseDatabase(db, checker);
-  return changed;
+  const renameCtx = makeRenameChecker(assetCat, oldName, newName);
+  traverseDatabase(db, renameCtx.checker, transcoder);
+  return renameCtx.changed;
 }
 
 export function applyRenameToMapUnit(
@@ -49,10 +50,11 @@ export function applyRenameToMapUnit(
   assetCat: AssetCategory,
   oldName: string,
   newName: string,
+  transcoder?: ReturnType<typeof makeTranscoder>,
 ): boolean {
-  const { checker, changed } = makeRenameChecker(assetCat, oldName, newName);
-  traverseMapUnit(mu, checker);
-  return changed;
+  const renameCtx = makeRenameChecker(assetCat, oldName, newName);
+  traverseMapUnit(mu, renameCtx.checker, transcoder);
+  return renameCtx.changed;
 }
 
 export function applyRenameToMapInfo(
@@ -61,9 +63,9 @@ export function applyRenameToMapInfo(
   oldName: string,
   newName: string,
 ): boolean {
-  const { checker, changed } = makeRenameChecker(assetCat, oldName, newName);
-  traverseMapInfo(mi, checker);
-  return changed;
+  const renameCtx = makeRenameChecker(assetCat, oldName, newName);
+  traverseMapInfo(mi, renameCtx.checker);
+  return renameCtx.changed;
 }
 
 export async function renameAsset(
@@ -85,14 +87,14 @@ export async function renameAsset(
   console.log(`[RENAME] old="${oldStem}" new="${newStemClean}" cat=${asset.category} enc=${data.encoding}`);
 
   const dbClone: Database = JSON.parse(JSON.stringify(data.database));
-  const dbChanged = applyRenameToDatabase(dbClone, asset.category, oldStem, newStemClean);
+  const dbChanged = applyRenameToDatabase(dbClone, asset.category, oldStem, newStemClean, transcoder);
   console.log(`[RENAME] dbChanged=${dbChanged}`);
 
   const changedMapIds: number[] = [];
   const mapClones = new Map<number, MapUnit>();
   for (const [mapId, mu] of data.maps) {
     const muClone: MapUnit = JSON.parse(JSON.stringify(mu));
-    if (applyRenameToMapUnit(muClone, asset.category, oldStem, newStemClean)) {
+    if (applyRenameToMapUnit(muClone, asset.category, oldStem, newStemClean, transcoder)) {
       changedMapIds.push(mapId);
       mapClones.set(mapId, muClone);
     }

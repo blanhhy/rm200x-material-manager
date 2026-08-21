@@ -70,36 +70,38 @@ function makeRefChecker(namesByCat: Map<AssetCategory, Set<string>>): FieldCheck
 export function applyClearToDatabase(
   db: Database,
   namesByCat: Map<AssetCategory, Set<string>>,
+  transcoder?: ReturnType<typeof makeTranscoder>,
 ): boolean {
-  const { checker, changed } = makeClearChecker(namesByCat);
-  traverseDatabase(db, checker);
-  return changed;
+  const clearCtx = makeClearChecker(namesByCat);
+  traverseDatabase(db, clearCtx.checker, transcoder);
+  return clearCtx.changed;
 }
 
 export function applyClearToMapUnit(
   mu: MapUnit,
   namesByCat: Map<AssetCategory, Set<string>>,
+  transcoder?: ReturnType<typeof makeTranscoder>,
 ): boolean {
-  const { checker, changed } = makeClearChecker(namesByCat);
-  traverseMapUnit(mu, checker);
-  return changed;
+  const clearCtx = makeClearChecker(namesByCat);
+  traverseMapUnit(mu, clearCtx.checker, transcoder);
+  return clearCtx.changed;
 }
 
 export function applyClearToMapInfo(
   mi: MapInfo,
   namesByCat: Map<AssetCategory, Set<string>>,
 ): boolean {
-  const { checker, changed } = makeClearChecker(namesByCat);
-  traverseMapInfo(mi, checker);
-  return changed;
+  const clearCtx = makeClearChecker(namesByCat);
+  traverseMapInfo(mi, clearCtx.checker);
+  return clearCtx.changed;
 }
 
-function dbReferencesCategory(db: Database, namesByCat: Map<AssetCategory, Set<string>>): boolean {
-  return traverseDatabase(db, makeRefChecker(namesByCat));
+function dbReferencesCategory(db: Database, namesByCat: Map<AssetCategory, Set<string>>, transcoder?: ReturnType<typeof makeTranscoder>): boolean {
+  return traverseDatabase(db, makeRefChecker(namesByCat), transcoder);
 }
 
-function mapReferencesCategory(mu: MapUnit, namesByCat: Map<AssetCategory, Set<string>>): boolean {
-  return traverseMapUnit(mu, makeRefChecker(namesByCat));
+function mapReferencesCategory(mu: MapUnit, namesByCat: Map<AssetCategory, Set<string>>, transcoder?: ReturnType<typeof makeTranscoder>): boolean {
+  return traverseMapUnit(mu, makeRefChecker(namesByCat), transcoder);
 }
 
 function mapInfoReferencesCategory(mi: MapInfo, namesByCat: Map<AssetCategory, Set<string>>): boolean {
@@ -131,7 +133,7 @@ export async function deleteAssets(
 
   if (clearReferences && namesByCat.size > 0) {
     console.time('[DELETE] pre-scan');
-    needDbClone = data.database ? dbReferencesCategory(data.database, namesByCat) : false;
+    needDbClone = data.database ? dbReferencesCategory(data.database, namesByCat, transcoder) : false;
 
     if (data.treeMap) {
       for (const mi of data.treeMap.maps ?? []) {
@@ -143,7 +145,7 @@ export async function deleteAssets(
     }
 
     for (const [mapId, mu] of data.maps) {
-      if (mapReferencesCategory(mu, namesByCat)) {
+      if (mapReferencesCategory(mu, namesByCat, transcoder)) {
         mapsNeedingClone.push(mapId);
       }
     }
@@ -166,7 +168,7 @@ export async function deleteAssets(
     if (needDbClone && data.database) {
       const dc: Database = JSON.parse(JSON.stringify(data.database));
       dbClone = dc;
-      dbChanged = applyClearToDatabase(dc, namesByCat);
+      dbChanged = applyClearToDatabase(dc, namesByCat, transcoder);
     }
     if (needTreeMapClone && data.treeMap) {
       const tmc: TreeMap = JSON.parse(JSON.stringify(data.treeMap));
@@ -179,7 +181,7 @@ export async function deleteAssets(
       const mu = data.maps.get(mapId);
       if (!mu) continue;
       const muClone = JSON.parse(JSON.stringify(mu));
-      if (applyClearToMapUnit(muClone, namesByCat)) {
+      if (applyClearToMapUnit(muClone, namesByCat, transcoder)) {
         changedMapIds.add(mapId);
         mapClones.set(mapId, muClone);
       }
