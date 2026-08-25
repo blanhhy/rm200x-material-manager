@@ -476,16 +476,24 @@ export async function loadGameProject(root: FileSystemDirectoryHandle): Promise<
     }
   } catch { /* no lmt */ }
 
-  let mapIdx = 1;
-  while (true) {
-    const name = `Map${String(mapIdx).padStart(4, '0')}.lmu`;
-    try {
-      const muHandle = await safeGetFileHandle(root, name);
-      const muBuf = await readAll(muHandle);
-      const mu = decodeMapUnit(muBuf, { engine: result.engine, transcoder });
-      result.maps.set(mapIdx, mu);
-      mapIdx++;
-    } catch { break; }
+  // 遍历目录加载所有 .lmu 地图。
+  // 不要假设编号连续
+  try {
+    for await (const [entryName, entry] of root.entries()) {
+      if (entry.kind !== 'file') continue;
+      const m = /^Map(\d{4})\.lmu$/i.exec(entryName);
+      if (!m) continue;
+      const mapId = Number(m[1]);
+      try {
+        const muBuf = await readAll(entry as FileSystemFileHandle);
+        const mu = decodeMapUnit(muBuf, { engine: result.engine, transcoder });
+        result.maps.set(mapId, mu);
+      } catch (e) {
+        console.warn(`[MAP LOAD] decode failed ${entryName}:`, (e as Error).message);
+      }
+    }
+  } catch (e) {
+    console.warn('[MAP LOAD] failed to scan .lmu:', (e as Error).message);
   }
 
   return result;
@@ -550,18 +558,23 @@ export async function reDecodeWithEncoding(
       }
     }
 
-    // LMU 一直是从磁盘读的
+    // 遍历目录加载所有 .lmu。
     newData.maps = new Map();
-    let mapIdx = 1;
-    while (true) {
-      const name = `Map${String(mapIdx).padStart(4, '0')}.lmu`;
-      try {
-        const muHandle = await safeGetFileHandle(data.rootHandle, name);
-        const muBuf = await readAll(muHandle);
-        const mu = decodeMapUnit(muBuf, { engine: data.engine, transcoder });
-        newData.maps.set(mapIdx, mu);
-        mapIdx++;
-      } catch { break; }
+    try {
+      for await (const [entryName, entry] of data.rootHandle.entries()) {
+        if (entry.kind !== 'file') continue;
+        const m = /^Map(\d{4})\.lmu$/i.exec(entryName);
+        if (!m) continue;
+        const mapId = Number(m[1]);
+        try {
+          const muBuf = await readAll(entry as FileSystemFileHandle);
+          newData.maps.set(mapId, decodeMapUnit(muBuf, { engine: data.engine, transcoder }));
+        } catch (e) {
+          console.warn(`[RE-DECODE MAP] decode failed ${entryName}:`, (e as Error).message);
+        }
+      }
+    } catch (e) {
+      console.warn('[RE-DECODE MAP] failed to scan .lmu:', (e as Error).message);
     }
   } else {
     // 没有 rootHandle，只能用缓存
