@@ -18,7 +18,6 @@ const MOVE_EVENT_PARAMS_HEADER = 4;
 
 /**
  * 遍历并改写 MoveEvent 事件命令 parameters 中内联的移动指令字符串参数
- * （ChangeGraphic → CharSet，PlaySoundEffect → Sound），与 referenceTracker 保持一致。
  * 返回 true 表示 checker 请求中止。
  */
 function visitMoveEventInline(
