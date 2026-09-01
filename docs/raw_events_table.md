@@ -88,11 +88,11 @@
 | OpenSaveMenu | 打开存档界面 | 11910 | | 如题 |
 | ChangeSaveAccess | 更改存档权限 | 11930 | | 如题 |
 | OpenMainMenu | 打开菜单界面 | 11950 | | 如题 |
-| ChangeMainMenuAccess | 更改菜单权限 | 11960 | 允许或禁止打开菜单 |
+| ChangeMainMenuAccess | 更改菜单权限 | 11960 | | 允许或禁止打开菜单 |
 | ConditionalBranch | IF | 12010 | 流程控制 | `if` |
-| Label | 标签 | 12110 | 流程控制 | `goto` 的标签，事件页作用域 |
+| Label | 标签 | 12110 | 语法 | 声明跳转标签，事件页作用域 |
 | JumpToLabel | GOTO | 12120 | 流程控制 | `goto` |
-| Loop | LOOP | 12210 | 流程控制 | 无条件循环 |
+| Loop | LOOP | 12210 | 流程控制 | `while true` |
 | BreakLoop | BREAK | 12220 | 流程控制 | `break` |
 | EndEventProcessing | RETURN | 12310 | 流程控制 | 提前结束当前调用 |
 | EraseEvent | 消除事件 | 12320 | | 仅对地图事件有效，在地图卸载前就卸载当前事件 |
