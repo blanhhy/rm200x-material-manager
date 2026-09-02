@@ -49,15 +49,14 @@ coverage/
 *.lcov
 .encdata/
 
-# 本地参考资料（体积大，非项目源码）
+# 本地参考资料
 .tech_support/
 doc/
-AGENTS.md
+AGENTS*.md
 
-# 调试 / 诊断脚本
-scripts/
+# 乱七八糟的脚本
+scripts/_scratch/
 diag*.mjs
-_search_block.cjs
 
 # 快照 / 运行时数据
 snapshots/
