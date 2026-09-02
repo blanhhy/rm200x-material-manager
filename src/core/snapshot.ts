@@ -9,6 +9,25 @@ export interface SnapshotInfo {
   label: string;
 }
 
+/** 快照涉及文件的分类统计：数据库(ldb/lmt) / 地图(lmu) / 素材 */ 
+export interface SnapshotFileStats {
+  db: number;
+  maps: number;
+  assets: number;
+}
+
+export function snapshotFileStats(files: string[], deletedFiles: string[] = []): SnapshotFileStats {
+  const stats: SnapshotFileStats = { db: 0, maps: 0, assets: 0 };
+  for (const p of [...files, ...deletedFiles]) {
+    const name = p.split('/').pop() ?? '';
+    const lower = name.toLowerCase();
+    if (lower === 'rpg_rt.ldb' || lower === 'rpg_rt.lmt') stats.db++;
+    else if (/^map\d{4}\.lmu$/i.test(name)) stats.maps++;
+    else stats.assets++;
+  }
+  return stats;
+}
+
 async function ensureDir(root: FileSystemDirectoryHandle, name: string): Promise<FileSystemDirectoryHandle> {
   return await root.getDirectoryHandle(name, { create: true });
 }
@@ -83,6 +102,7 @@ export async function createSnapshot(
   renameInfo?: { fromRel: string; toRel: string; label?: string },
   filesToDelete?: string[],
   blobBuffer?: Map<string, Blob>,
+  labelOverride?: string,
 ): Promise<SnapshotInfo | null> {
   try {
     const backupRoot = await ensureDir(root, BACKUP_DIR);
@@ -124,7 +144,7 @@ export async function createSnapshot(
       }
     }
 
-    let label = renameInfo?.label ?? '';
+    let label = labelOverride ?? renameInfo?.label ?? '';
     if (!label && deletedFiles.length > 0) {
       label = `删除 ${deletedFiles.length} 个素材`;
     }

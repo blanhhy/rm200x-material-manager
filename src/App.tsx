@@ -19,6 +19,7 @@ import FilterDropdown from './components/FilterDropdown';
 import TaskPanel from './components/TaskPanel';
 import { initBuiltinRtp } from './core/rtpIndex';
 import { getCategories } from './scanner/assetTypes';
+import { snapshotFileStats } from './core/snapshot';
 
 type Theme = 'dark' | 'light';
 const _savedTheme = (typeof localStorage !== 'undefined' ? localStorage.getItem('rmm-theme') : null) as Theme | null;
@@ -201,6 +202,11 @@ export default function App() {
     return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
   }
 
+  function formatSnapStats(s: { files: string[]; deletedFiles?: string[] }) {
+    const st = snapshotFileStats(s.files, s.deletedFiles);
+    return `数据库 ${st.db} · 地图 ${st.maps} · 素材 ${st.assets}`;
+  }
+
   return (
     <div className="appRoot">
       <header className="appHeader">
@@ -238,7 +244,7 @@ export default function App() {
                       <button onClick={() => handleRestoreSnapshot(s)} className="popupMenuBtn">
                         <div className="popupMenuLabel">{s.label || s.dirName}</div>
                         <div className="popupMenuMeta">
-                          {formatTime(s.timestamp)} · {s.files.length + (s.deletedFiles?.length ?? 0)} 个文件
+                          {formatTime(s.timestamp)} · {formatSnapStats(s)}
                         </div>
                       </button>
                       <button onClick={(e) => handleDeleteSnapshot(s, e)} className="popupMenuBtnDanger" title="删除快照">×</button>

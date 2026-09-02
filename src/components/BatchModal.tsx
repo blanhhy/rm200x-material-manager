@@ -1,13 +1,15 @@
 import { useState, useMemo } from 'react';
 import { useStore } from '../store/useStore';
 import { getCategories } from '../scanner/assetTypes';
+import { buildRtpNormalizePlan } from '../core/rtpIndex';
 
-export type BatchAction = 'injectRtp' | 'cleanUnused' | 'clearMissing';
+export type BatchAction = 'injectRtp' | 'cleanUnused' | 'clearMissing' | 'normalizeRtp';
 
 const LABELS: Record<BatchAction, string> = {
   injectRtp: '注入RTP',
   cleanUnused: '清理无用素材',
   clearMissing: '清除无效引用',
+  normalizeRtp: 'RTP 名称标准化',
 };
 
 interface Props {
@@ -31,9 +33,15 @@ export default function BatchModal({ action, onClose, onConfirm }: Props) {
       for (const a of allAnalyses) { if (a.onDisk && !a.inDatabase) m.set(a.asset.category, (m.get(a.asset.category) || 0) + 1); }
     } else if (action === 'clearMissing') {
       for (const a of allAnalyses) { if (!a.onDisk && a.inDatabase && !a.inRtp) m.set(a.asset.category, (m.get(a.asset.category) || 0) + 1); }
+    } else if (action === 'normalizeRtp') {
+      const plan = buildRtpNormalizePlan(
+        allAnalyses.flatMap(a => a.references),
+        gameData?.engine ?? '2k3',
+      );
+      for (const item of plan) m.set(item.category, (m.get(item.category) || 0) + 1);
     }
     return m;
-  }, [analyses, action]);
+  }, [analyses, action, gameData]);
 
   const total = Array.from(counts.values()).reduce((s, c) => s + c, 0);
 

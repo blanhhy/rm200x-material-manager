@@ -6,7 +6,8 @@ import { useRebuildAnalyses } from './useRebuildAnalyses';
 import { pendingBlobBuffer } from './pendingBlobs';
 import type { BatchAction } from '../components/BatchModal';
 import { CATEGORY_EXTS, getPrimaryExt } from '../scanner/assetTypes';
-import { getRtpBundleUrl, lookupRTPFileInfo, resolveRtpDirName, getActiveRtpKind, getActiveRtpDiskHandle } from '../core/rtpIndex';
+import { getRtpBundleUrl, lookupRTPFileInfo, resolveRtpDirName, getActiveRtpKind, getActiveRtpDiskHandle, buildRtpNormalizePlan } from '../core/rtpIndex';
+import { standardizeRtpReferences } from '../core/rtpStandardize';
 
 export function useBatchActions(
   setSelectedKeys: (keys: Set<string>) => void,
@@ -197,10 +198,38 @@ export function useBatchActions(
     }
   }
 
+  async function handleNormalizeRtp(cats: string[]) {
+    const catSet = new Set(cats);
+    const plan = buildRtpNormalizePlan(
+      Array.from(analyses.values()).flatMap(a => a.references),
+      gameData!.engine,
+    ).filter(i => catSet.has(i.category));
+    if (plan.length === 0) { alert('所选类别中没有需要标准化的 RTP 引用'); return; }
+
+    setBatchAction(null);
+    setLoading(true);
+    try {
+      const result = await standardizeRtpReferences(gameData!, plan, assets);
+      // 重扫磁盘 + 重建引用分析（文件名已变，需重取 handle）
+      const found = await scanProjectAssets(gameData!.rootHandle!);
+      await rebuild(gameData!, found);
+      setSelectedKeys(new Set());
+      setSelectedAssetKey(null);
+      await refreshSnapshots(gameData!.rootHandle);
+      if (result.skipped.length > 0) console.warn('[RTP-STD] 跳过的项：', result.skipped);
+      alert(result.message);
+    } catch (e) {
+      alert('RTP 标准化失败：' + (e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleBatchConfirm(cats: string[]) {
     if (batchAction === 'injectRtp') await handleInjectRtp(cats);
     else if (batchAction === 'cleanUnused') await handleCleanUnused(cats);
     else if (batchAction === 'clearMissing') await handleClearMissing(cats);
+    else if (batchAction === 'normalizeRtp') await handleNormalizeRtp(cats);
   }
 
   return { batchAction, setBatchAction, handleBatchConfirm };

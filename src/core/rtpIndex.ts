@@ -1,5 +1,5 @@
 import iconv from 'iconv-lite';
-import type { AssetCategory, EngineVersion } from '../types/index';
+import type { AssetCategory, AssetReference, EngineVersion } from '../types/index';
 import { getPrimaryExt } from '../scanner/assetTypes';
 import { ASSET_DIRECTORIES } from '../scanner/assetTypes';
 import mappingData from './data/rtp-mapping.json';
@@ -82,11 +82,12 @@ const ROWS_2K3 = buildRowIndex(mapping.tables['2k3'].rows);
 function buildBuiltinFileSet(engine: EngineVersion): RtpFileSet {
   const cats = rtpFiles[engine];
   const fs = new Map<string, Set<string>>();
+  // tsx / node 等非 Vite 环境没有 import.meta.env；浏览器构建里 PROD 才会剔除音频
+  const isProd = (import.meta as any).env?.PROD === true;
   if (cats) {
     for (const [k, fileList] of Object.entries(cats)) {
       const lowerK = k.toLowerCase();
-      // Production build excludes audio — don't claim availability
-      if (import.meta.env.PROD && (lowerK === 'music' || lowerK === 'sound')) continue;
+      if (isProd && (lowerK === 'music' || lowerK === 'sound')) continue;
       fs.set(lowerK, new Set(fileList.map(f => f.toLowerCase())));
     }
   }
@@ -366,6 +367,61 @@ export function lookupRTPAlternative(
     }
   }
   return entries[0].row[1] ?? null;
+}
+
+// ── RTP 名称标准化 ─────────────────────────────────────────────────
+
+/** 标准化目标：映射表中"英文标准名"列的索引（2k=en，2k3=enOfficial，恰好都是列 2） */
+const EN_NAME_COL = 2;
+
+/**
+ * 找出 dbName 对应的 Steam 英文标准 RTP 名（映射表英文列；2k=en，2k3=enOfficial，索引都是 2）。
+ * - 输入已命中某行的英文列 → 已是标准名，返回 null（不重命名）
+ * - 英文列缺失 → 返回 null（绝不回退到 韩/俄/西/葡/繁中 等其他语言列，避免把英文名改成外文）
+ */
+export function lookupRtpStandardName(
+  dbName: string,
+  category: AssetCategory,
+  engine: EngineVersion,
+): string | null {
+  if (!dbName) return null;
+  const rtpTableDir = CATEGORY_TO_RTP_DIR[category];
+  if (!rtpTableDir) return null;
+  const entries = lookupInMapping(dbName, engine, rtpTableDir);
+  if (entries.length === 0) return null;
+  const inputKey = dbName.trim().toLowerCase();
+  for (const e of entries) {
+    const name = e.row[EN_NAME_COL];
+    if (typeof name !== 'string') continue;
+    const trimmed = name.trim();
+    if (!trimmed) continue;
+    if (/[/\\]/.test(trimmed)) continue; // 不是合法文件名
+    if (trimmed.toLowerCase() === inputKey) return null; // 已是 Steam 英文标准名
+    return trimmed;
+  }
+  return null;
+}
+
+export interface RtpNormalizeItem {
+  category: AssetCategory;
+  oldName: string;
+  newName: string;
+}
+
+/** 从引用集合计算"非英文 RTP 名 → 英文标准名"的唯一重命名清单。 */
+export function buildRtpNormalizePlan(
+  refs: Iterable<Pick<AssetReference, 'category' | 'assetName'>>,
+  engine: EngineVersion,
+): RtpNormalizeItem[] {
+  const seen = new Map<string, RtpNormalizeItem>();
+  for (const r of refs) {
+    if (!r.assetName) continue;
+    const en = lookupRtpStandardName(r.assetName, r.category, engine);
+    if (!en) continue;
+    const key = `${r.category}\u0000${r.assetName.trim().toLowerCase()}`;
+    if (!seen.has(key)) seen.set(key, { category: r.category, oldName: r.assetName.trim(), newName: en });
+  }
+  return Array.from(seen.values());
 }
 
 /** Initialize builtin RTP as the active source */
