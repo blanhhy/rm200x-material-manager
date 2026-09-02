@@ -7,7 +7,8 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { detectEncoding, detectEngine } from '../src/core/lcfLoader';
+import { detectEncoding } from '../src/core/encodingDetect';
+import { detectEngine } from '../src/core/lcfLoader';
 import { parseScanArgs, scanGames } from './gameScanner';
 
 function readIfExists(p: string): Uint8Array | null {
@@ -44,8 +45,6 @@ for (const dir of filtered) {
   const name = path.basename(dir);
   const ldbBuf = readIfExists(path.join(dir, 'RPG_RT.ldb'));
   if (!ldbBuf) continue;
-  const iniBuf = readIfExists(path.join(dir, 'RPG_RT.ini'));
-  const lmuBufs = loadLmuBufs(dir);
 
   const scores: Record<string, number> = {};
   const samples: Record<string, string> = {};
@@ -62,7 +61,7 @@ for (const dir of filtered) {
   let engine = '2k', encoding = 'ERROR';
   try {
     engine = detectEngine(ldbBuf);
-    encoding = detectEncoding(iniBuf, ldbBuf, engine as never, lmuBufs);
+    encoding = detectEncoding(ldbBuf, engine as never, loadLmuBufs(dir));
   } catch (e) {
     console.log = origLog;
     console.log(`[ERROR] ${name}: ${(e as Error).message}`);

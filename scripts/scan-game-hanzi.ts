@@ -11,7 +11,8 @@ import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { decodeDatabase, decodeMapUnit } from 'rpgrt';
 import type { Database, MapUnit, EventCommand, EngineVersion, Transcoder } from 'rpgrt';
-import { detectEncoding, detectEngine } from '../src/core/lcfLoader';
+import { detectEncoding } from '../src/core/encodingDetect';
+import { detectEngine } from '../src/core/lcfLoader';
 import { makeTranscoder } from '../src/core/internal/lcfIo';
 import { COMMON_HANZI_REF } from './common_hanzi_ref';
 import { parseScanArgs, scanGames } from './gameScanner';
@@ -105,24 +106,17 @@ async function main() {
     try { engine = detectEngine(ldbBuf); }
     catch { continue; }
 
-    // Collect .lmu files (up to 30)
+    // Collect .lmu files (up to 30)。
     const lmuBufs: Uint8Array[] = [];
-    const lmuNames: string[] = [];
     for (const f of fs.readdirSync(dir)) {
       if (!f.startsWith('Map') || !f.endsWith('.lmu')) continue;
       if (lmuBufs.length >= 30) break;
       lmuBufs.push(new Uint8Array(fs.readFileSync(path.join(dir, f))));
-      lmuNames.push(f);
     }
 
-    // Read ini
-    let iniBuf: Uint8Array | null = null;
-    try { iniBuf = new Uint8Array(fs.readFileSync(path.join(dir, 'RPG_RT.ini'))); } catch {}
-
-    // Detect encoding (fallback to lightweight if no LMU)
     const encoding = lmuBufs.length > 0
-      ? detectEncoding(iniBuf, ldbBuf, engine, lmuBufs)
-      : detectEncoding(iniBuf, new Uint8Array(0), engine, []);
+      ? detectEncoding(ldbBuf, engine, lmuBufs)
+      : detectEncoding(new Uint8Array(0), engine, []);
 
     const t = makeTranscoder(encoding);
 
