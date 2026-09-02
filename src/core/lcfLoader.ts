@@ -317,38 +317,69 @@ function scoreEncoding(
   return { total, reasons };
 }
 
+/**
+ * 从 RPG_RT.ini 的 [EasyRPG] 段读取显式编码声明（EasyRPG 扩展，Editor/Player 均支持）。
+ * 段名/键名/编码标识符都是 ASCII，用 latin1 解码即可读取，不依赖任何多字节编码。
+ * 返回 null 表示无声明或声明不识别（"auto"/空 → 走自动检测）。
+ */
+export function readEncodingFromIni(iniBuf: Uint8Array | null): EncodingName | null {
+  if (!iniBuf) return null;
+  const text = iconv.decode(iniBuf, 'latin1').replace(/^\uFEFF/, '');
+  let inEasyRpg = false;
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith(';') || line.startsWith('#')) continue;
+    const sec = line.match(/^\[(.+)\]$/);
+    if (sec) {
+      inEasyRpg = sec[1].trim().toLowerCase() === 'easyrpg';
+      continue;
+    }
+    if (!inEasyRpg) continue;
+    const eq = line.indexOf('=');
+    if (eq <= 0) continue;
+    if (line.slice(0, eq).trim().toLowerCase() !== 'encoding') continue;
+    const val = line.slice(eq + 1).trim().toLowerCase();
+    if (!val || val === 'auto') return null;
+    // 归一化 EasyRPG 常见编码别名
+    if (val.includes('utf')) return 'utf8';
+    if (val.includes('932') || val.includes('sjis') || val.includes('shift')) return 'shift_jis';
+    if (val.includes('gb') || val.includes('936')) return 'gbk';
+    if (val.includes('euc')) return 'eucjp';
+    return null; // 不认识的声明，回退到自动检测
+  }
+  return null;
+}
+
 export function detectEncoding(
   iniBuf: Uint8Array | null,
   ldbBuf: Uint8Array | null,
   engine: EngineVersion = '2k',
   extraBufs: Uint8Array[] = [],
 ): EncodingName {
-  if (!ldbBuf && !iniBuf) return 'latin1';
-
-  if (!ldbBuf && iniBuf) {
-    let highBytes = 0;
-    for (let i = 0; i < iniBuf.length; i++) if (iniBuf[i] > 0x7F) highBytes++;
-    if (highBytes === 0) return 'latin1';
-    let best: EncodingName = 'latin1';
-    let bestBad = Infinity;
-    for (const enc of CANDIDATE_ENCODINGS) {
-      const text = iconv.decode(iniBuf, enc);
-      const s = scoreCharStats(text);
-      // 无 LDB 时仅凭 ini 探测：优先选"乱码字节最少"的编码
-      const bad = s.other;
-      if (bad < bestBad) { bestBad = bad; best = enc; }
-    }
-    return best;
+  // EasyRPG 项目可在 RPG_RT.ini 的 [EasyRPG] 段显式声明 Encoding，
+  // EasyRPG Player 的优先级是 ini 声明 > 自动检测，这里同样尊重该声明。
+  // 除此之外 ini 不参与任何编码判断 —— ini 不是游戏数据的一部分，删掉它游戏也能正常运行，
+  const iniEnc = readEncodingFromIni(iniBuf);
+  if (iniEnc) {
+    console.log(`[ENCODE INI-DECLARED] ${iniEnc}`);
+    return iniEnc;
   }
 
   if (!ldbBuf) return 'latin1';
 
   let bestEnc: EncodingName = 'latin1';
   let bestScore = -Infinity;
+  let anyPositive = false;
   for (const enc of CANDIDATE_ENCODINGS) {
     const r = scoreEncoding(ldbBuf, engine, enc, extraBufs);
     if (r.total > bestScore) { bestScore = r.total; bestEnc = enc; }
+    if (r.total > 0) anyPositive = true;
   }
+
+  // 纯 ASCII 项目（如未经语言补丁的 RM Steam 版工程）：
+  // 无任何非 ASCII 显示文本，所有候选编码解码结果相同、得分都是 0，编码无关紧要。
+  // 返回 latin1 表示"无多字节文本"。
+  if (!anyPositive) return 'latin1';
 
   console.log(`[ENCODE BEST] ${bestEnc} score=${bestScore.toFixed(1)}`);
   return bestEnc;
