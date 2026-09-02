@@ -3,7 +3,7 @@ import { decodeDatabase, decodeMapUnit, decodeTreeMap, EventCommandCode } from '
 import type { Database, MapUnit, MapInfo, TreeMap, EngineVersion } from 'rpgrt';
 import type { ProjectGameData, EncodingName } from '../types/index';
 import { makeTranscoder } from './internal/lcfIo';
-import commonHanziList from './internal/commonHanzi.json';
+import commonHanziList from './data/commonHanzi.json';
 
 // 500 个最常见汉字（由 scripts/scan-game-hanzi.ts 扫描 51 个 RM 游戏实际文本统计得出），
 // 仅用于编码推断中的汉字常用度评分。

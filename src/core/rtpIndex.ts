@@ -2,8 +2,8 @@ import iconv from 'iconv-lite';
 import type { AssetCategory, EngineVersion } from '../types/index';
 import { getPrimaryExt } from '../scanner/assetTypes';
 import { ASSET_DIRECTORIES } from '../scanner/assetTypes';
-import mappingData from './rtp-data/rtp-mapping.json';
-import rtpFilesData from './rtp-data/rtp-files.json';
+import mappingData from './data/rtp-mapping.json';
+import rtpFilesData from './data/rtp-files.json';
 
 // ── Types ───────────────────────────────────────────────────────────
 
