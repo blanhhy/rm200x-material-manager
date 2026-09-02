@@ -3,7 +3,11 @@ import { decodeDatabase, decodeMapUnit, decodeTreeMap, EventCommandCode } from '
 import type { Database, MapUnit, MapInfo, TreeMap, EngineVersion } from 'rpgrt';
 import type { ProjectGameData, EncodingName } from '../types/index';
 import { makeTranscoder } from './internal/lcfIo';
-import { isCommonHanzi } from './internal/hanziData';
+import commonHanziList from './internal/commonHanzi.json';
+
+// 500 个最常见汉字（由 scripts/scan-game-hanzi.ts 扫描 51 个 RM 游戏实际文本统计得出），
+// 仅用于编码推断中的汉字常用度评分。
+const COMMON_HANZI = new Set<string>(commonHanziList);
 
 function readAll(handle: FileSystemFileHandle): Promise<Uint8Array> {
   return handle.getFile().then(f => f.arrayBuffer()).then(b => new Uint8Array(b));
@@ -63,7 +67,8 @@ function scoreCharStats(text: string): CharStats {
     // 汉字
     if (cp >= 0x4E00 && cp <= 0x9FFF) {
       hasKanji = true; totalHanzi++;
-      if (isCommonHanzi(ch)) commonHanzi++;
+      // 常用汉字内联判定：衡量汉字常用度，区分"像汉字"的乱码与真中文
+      if (COMMON_HANZI.has(ch)) commonHanzi++;
       curRun++;
       if (curRun > maxHanziRun) maxHanziRun = curRun;
       continue;
