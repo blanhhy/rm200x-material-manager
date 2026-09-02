@@ -21,10 +21,8 @@ const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 // Dialog event command codes (excluding Comment which is not display text)
 const TEXT_CMDS = new Set([
   10110, 20110, // ShowMessage
-  10140, 20140, // ShowChoice
-  10150,        // InputNumber
+  20140,        // ShowChoiceOption（不含 10140：其 string 与选项文本重复）
   10610,        // ChangeHeroName
-  10740,        // EnterHeroName
 ]);
 
 function collectCmdTexts(cmd: EventCommand, texts: string[]) {
@@ -123,8 +121,8 @@ async function main() {
 
     // Detect encoding (fallback to lightweight if no LMU)
     const encoding = lmuBufs.length > 0
-      ? detectEncoding(iniBuf!, ldbBuf, engine, lmuBufs)
-      : detectEncoding(iniBuf!, new Uint8Array(0), engine, []);
+      ? detectEncoding(iniBuf, ldbBuf, engine, lmuBufs)
+      : detectEncoding(iniBuf, new Uint8Array(0), engine, []);
 
     const t = makeTranscoder(encoding);
 

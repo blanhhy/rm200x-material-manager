@@ -150,11 +150,10 @@ function collectDisplayTexts(db: Database): string[] {
 const TEXT_CODES = new Set<number>([
   EventCommandCode.ShowMessage,      // 10110  显示文章（首行）
   EventCommandCode.ShowMessage2,     // 20110  显示文章（续行）
-  EventCommandCode.ShowChoice,       // 10140  显示选项
+  // 不含 ShowChoice(10140)：其 string 是选项文本的 "/" 连接冗余副本，
+  // 与 20140 的逐选项存储完全重叠（实际游戏验证），运行时也只显示 20140。
   EventCommandCode.ShowChoiceOption, // 20140  单个选项文本
-  EventCommandCode.InputNumber,      // 10150  数值输入
   EventCommandCode.ChangeHeroName,   // 10610  更改英雄名称
-  EventCommandCode.EnterHeroName,    // 10740  输入英雄名称
 ]);
 
 /** 从扁平事件命令列表提取显示文本（eventCommands 是扁平列表，嵌套用 indent 表达，无需递归）。 */
