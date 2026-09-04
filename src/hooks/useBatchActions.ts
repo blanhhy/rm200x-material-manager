@@ -6,7 +6,7 @@ import { useRebuildAnalyses } from './useRebuildAnalyses';
 import { pendingBlobBuffer } from './pendingBlobs';
 import type { BatchAction } from '../components/BatchModal';
 import { CATEGORY_EXTS, getPrimaryExt } from '../scanner/assetTypes';
-import { lookupRTPFileInfo, resolveRtpDirName, getActiveRtpKind, getActiveRtpDiskHandle, buildRtpNormalizePlan } from '../core/rtpIndex';
+import { lookupRTPFileInfo, resolveRtpDirName, getActiveRtpKind, getActiveRtpDiskHandle, buildRtpNormalizePlan, isRTPAsset } from '../core/rtpIndex';
 import { standardizeRtpReferences } from '../core/rtpStandardize';
 import { fetchRtpBlob } from '../core/rtpCache';
 
@@ -136,6 +136,36 @@ export function useBatchActions(
     });
   }
 
+  async function handlePruneRtp(cats: string[]) {
+    const catSet = new Set(cats);
+    const engine = gameData!.engine;
+    const toDelete = Array.from(analyses.values())
+      .filter(a => a.onDisk && catSet.has(a.asset.category) && a.references.some(r => isRTPAsset(r.assetName, r.category, engine)))
+      .map(a => a.asset);
+    if (toDelete.length === 0) { alert('所选类别中没有可精简的 RTP 素材'); return; }
+
+    setLoading(true);
+    try {
+      const result = await deleteAssets(gameData!, toDelete, false);
+      if (result.deletedBlobs) {
+        for (const [k, v] of result.deletedBlobs) pendingBlobBuffer.current.set(k, v);
+      }
+      const deletedSet = new Set(result.filesDeleted);
+      const newAssets = assets.filter(a => !deletedSet.has(a.path));
+      const diskOnly = newAssets.filter(a => a.handle !== undefined);
+      await rebuild(gameData!, diskOnly);
+      setSelectedKeys(new Set());
+      setSelectedAssetKey(null);
+      await refreshSnapshots(gameData!.rootHandle);
+      setBatchAction(null);
+      alert(`已精简 ${result.filesDeleted.length}/${toDelete.length} 个 RTP 素材`);
+    } catch (e) {
+      alert('精简失败：' + (e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleCleanUnused(cats: string[]) {
     const catSet = new Set(cats);
     const toDelete = Array.from(analyses.values())
@@ -222,6 +252,7 @@ export function useBatchActions(
 
   async function handleBatchConfirm(cats: string[]) {
     if (batchAction === 'injectRtp') await handleInjectRtp(cats);
+    else if (batchAction === 'pruneRtp') await handlePruneRtp(cats);
     else if (batchAction === 'cleanUnused') await handleCleanUnused(cats);
     else if (batchAction === 'clearMissing') await handleClearMissing(cats);
     else if (batchAction === 'normalizeRtp') await handleNormalizeRtp(cats);

@@ -1,12 +1,13 @@
 import { useState, useMemo } from 'react';
 import { useStore } from '../store/useStore';
 import { getCategories } from '../scanner/assetTypes';
-import { buildRtpNormalizePlan } from '../core/rtpIndex';
+import { buildRtpNormalizePlan, isRTPAsset } from '../core/rtpIndex';
 
-export type BatchAction = 'injectRtp' | 'cleanUnused' | 'clearMissing' | 'normalizeRtp';
+export type BatchAction = 'injectRtp' | 'pruneRtp' | 'cleanUnused' | 'clearMissing' | 'normalizeRtp';
 
 const LABELS: Record<BatchAction, string> = {
   injectRtp: '注入RTP',
+  pruneRtp: '精简RTP',
   cleanUnused: '清理无用素材',
   clearMissing: '清除无效引用',
   normalizeRtp: 'RTP 名称标准化',
@@ -29,6 +30,11 @@ export default function BatchModal({ action, onClose, onConfirm }: Props) {
     const allAnalyses = Array.from(analyses.values());
     if (action === 'injectRtp') {
       for (const a of allAnalyses) { if (a.inRtp && !a.onDisk) m.set(a.asset.category, (m.get(a.asset.category) || 0) + 1); }
+    } else if (action === 'pruneRtp') {
+      const engine = gameData?.engine;
+      if (engine) {
+        for (const a of allAnalyses) { if (a.onDisk && a.references.some(r => isRTPAsset(r.assetName, r.category, engine))) m.set(a.asset.category, (m.get(a.asset.category) || 0) + 1); }
+      }
     } else if (action === 'cleanUnused') {
       for (const a of allAnalyses) { if (a.onDisk && !a.inDatabase) m.set(a.asset.category, (m.get(a.asset.category) || 0) + 1); }
     } else if (action === 'clearMissing') {
