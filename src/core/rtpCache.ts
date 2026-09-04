@@ -1,3 +1,6 @@
+import type { AssetCategory, EngineVersion } from '../types/index';
+import { getRtpRelPath, getRtpSourceUrls } from './rtpIndex';
+
 // RTP 素材 blob 的浏览器本地缓存（IndexedDB）。
 // 注入时下载的素材（图片或音频）缓存下来，之后离线/再次注入同一素材直接读本地，免重复下载。
 // 仅在线版（生产构建）启用：本地 dev 下素材走本机 dev server，fetch 瞬间完成，无缓存必要。
@@ -59,4 +62,31 @@ export async function putCachedRtpBlob(key: string, blob: Blob): Promise<void> {
   } catch {
     // 缓存写入失败不影响注入主流程
   }
+}
+
+/**
+ * 获取内置 RTP 素材的 blob：先查本地缓存，未命中按候选源顺序 fetch 后写回缓存。
+ * 注入与预览统一走此路径；dev 下缓存自动短路（见 getCachedRtpBlob / putCachedRtpBlob）。
+ */
+export async function fetchRtpBlob(
+  dbName: string,
+  category: AssetCategory,
+  engine: EngineVersion,
+): Promise<Blob | null> {
+  const cacheKey = getRtpRelPath(dbName, category, engine) ?? '';
+  if (cacheKey) {
+    const cached = await getCachedRtpBlob(cacheKey);
+    if (cached) return cached;
+  }
+  for (const u of getRtpSourceUrls(dbName, category, engine)) {
+    try {
+      const resp = await fetch(u);
+      if (resp.ok) {
+        const blob = await resp.blob();
+        if (cacheKey) await putCachedRtpBlob(cacheKey, blob);
+        return blob;
+      }
+    } catch {}
+  }
+  return null;
 }

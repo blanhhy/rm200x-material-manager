@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { useStore } from '../store/useStore';
 import type { AssetCategory, AssetFile, AssetAnalysis, EngineVersion } from '../types/index';
 import { parsePNGPalette0, replaceColorWithTransparency, swapPalette0WithRGB, parsePNG } from '../preview/pngPalette';
-import { getRtpBundleUrl, isRTPAvailable, getActiveRtpKind, getActiveRtpDiskHandle, lookupRTPFileInfo, resolveRtpDirName } from '../core/rtpIndex';
+import { isRTPAvailable, getActiveRtpKind, getActiveRtpDiskHandle, lookupRTPFileInfo, resolveRtpDirName } from '../core/rtpIndex';
+import { fetchRtpBlob } from '../core/rtpCache';
 import { CATEGORY_EXTS, IMAGE_CATEGORIES } from '../scanner/assetTypes';
 import TransparentColorPicker from './TransparentColorPicker';
 
@@ -136,11 +137,9 @@ export default function AssetPreview({
       try {
         let buf: Uint8Array | null = null;
         if (srcKind === 'builtin') {
-          const bundleUrl = getRtpBundleUrl(asset.name, asset.category, engine);
-          if (!bundleUrl || cancelled) { setLoading(false); return; }
-          const resp = await fetch(bundleUrl);
-          if (!resp.ok || cancelled) { setLoading(false); return; }
-          buf = new Uint8Array(await resp.arrayBuffer());
+          const blob = await fetchRtpBlob(asset.name, asset.category, engine);
+          if (!blob || cancelled) { setLoading(false); return; }
+          buf = new Uint8Array(await blob.arrayBuffer());
         } else if (srcKind === 'disk') {
           const diskHandle = getActiveRtpDiskHandle();
           if (!diskHandle) { setLoading(false); return; }
@@ -203,9 +202,9 @@ export default function AssetPreview({
     (async () => {
       try {
         if (srcKind === 'builtin') {
-          const bundleUrl = getRtpBundleUrl(asset.name, asset.category, engine);
-          if (!bundleUrl || cancelled) return;
-          setRtpMediaUrl(bundleUrl);
+          const blob = await fetchRtpBlob(asset.name, asset.category, engine);
+          if (!blob || cancelled) return;
+          setRtpMediaUrl(URL.createObjectURL(blob));
         } else if (srcKind === 'disk') {
           const info = lookupRTPFileInfo(asset.name, asset.category, engine);
           if (!info) return;

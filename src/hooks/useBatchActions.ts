@@ -6,9 +6,9 @@ import { useRebuildAnalyses } from './useRebuildAnalyses';
 import { pendingBlobBuffer } from './pendingBlobs';
 import type { BatchAction } from '../components/BatchModal';
 import { CATEGORY_EXTS, getPrimaryExt } from '../scanner/assetTypes';
-import { getRtpSourceUrls, getRtpRelPath, lookupRTPFileInfo, resolveRtpDirName, getActiveRtpKind, getActiveRtpDiskHandle, buildRtpNormalizePlan } from '../core/rtpIndex';
+import { lookupRTPFileInfo, resolveRtpDirName, getActiveRtpKind, getActiveRtpDiskHandle, buildRtpNormalizePlan } from '../core/rtpIndex';
 import { standardizeRtpReferences } from '../core/rtpStandardize';
-import { getCachedRtpBlob, putCachedRtpBlob } from '../core/rtpCache';
+import { fetchRtpBlob } from '../core/rtpCache';
 
 export function useBatchActions(
   setSelectedKeys: (keys: Set<string>) => void,
@@ -61,22 +61,7 @@ export function useBatchActions(
       const rtpKind = getActiveRtpKind();
 
       if (rtpKind === 'builtin') {
-        // 图片与音频同构：先查本地缓存，未命中按候选源顺序下载后写回缓存
-        const cacheKey = getRtpRelPath(asset.name, asset.category, engine) ?? '';
-        if (cacheKey) {
-          blob = await getCachedRtpBlob(cacheKey);
-        }
-        if (!blob) {
-          for (const u of getRtpSourceUrls(asset.name, asset.category, engine)) {
-            try {
-              const resp = await fetch(u);
-              if (resp.ok) { blob = await resp.blob(); break; }
-            } catch {}
-          }
-          if (blob && cacheKey) {
-            await putCachedRtpBlob(cacheKey, blob);
-          }
-        }
+        blob = await fetchRtpBlob(asset.name, asset.category, engine);
       } else if (rtpKind === 'disk') {
         const info = lookupRTPFileInfo(asset.name, asset.category, engine);
         if (info) {

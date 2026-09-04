@@ -327,19 +327,6 @@ function rtpStemExt(stem: string, category: AssetCategory): string {
   return (category === 'Music' && MUSIC_WAV_STEMS.has(stem)) ? '.wav' : getPrimaryExt(category);
 }
 
-/** Get bundle URL for built-in RTP asset */
-export function getRtpBundleUrl(
-  dbName: string,
-  category: AssetCategory,
-  engine: EngineVersion,
-): string | null {
-  const rtpTableDir = CATEGORY_TO_RTP_DIR[category];
-  if (!rtpTableDir) return null;
-  const stem = lookupFullEnglishStem(dbName, category, engine);
-  if (!stem) return null;
-  return `${import.meta.env.BASE_URL}rtp/${engine}/${rtpTableDir}/${stem}${rtpStemExt(stem, category)}`;
-}
-
 /**
  * RTP 内置素材的下载候选 URL。
  * 在线版生产构建不打包音频，本地 bundle 可能拿不到；
@@ -490,8 +477,9 @@ export function buildRtpNormalizePlan(
 
 /** Initialize builtin RTP as the active source */
 export function initBuiltinRtp(engine: EngineVersion): void {
+  // 内置 RTP 完整含音频（本地 bundle 缺的音频由仓库 raw 兜底），故用完整文件集判断可用性
   activeSource = {
-    fileSet: getBuiltinFileSet(engine),
+    fileSet: getFullBuiltinFileSet(engine),
     kind: 'builtin',
   };
 }
