@@ -79,15 +79,16 @@ const ROWS_2K3 = buildRowIndex(mapping.tables['2k3'].rows);
 
 // ── Built-in file sets ──────────────────────────────────────────────
 
-function buildBuiltinFileSet(engine: EngineVersion): RtpFileSet {
+function buildBuiltinFileSet(engine: EngineVersion, full = false): RtpFileSet {
   const cats = rtpFiles[engine];
   const fs = new Map<string, Set<string>>();
-  // tsx / node 等非 Vite 环境没有 import.meta.env；浏览器构建里 PROD 才会剔除音频
+  // tsx / node 等非 Vite 环境没有 import.meta.env
   const isProd = (import.meta as any).env?.PROD === true;
   if (cats) {
     for (const [k, fileList] of Object.entries(cats)) {
       const lowerK = k.toLowerCase();
-      if (isProd && (lowerK === 'music' || lowerK === 'sound')) continue;
+      // 在线版生产构建不打包音频；full 模式保留音频（对齐仓库 public/rtp 完整托管），供注入回退下载
+      if (!full && isProd && (lowerK === 'music' || lowerK === 'sound')) continue;
       fs.set(lowerK, new Set(fileList.map(f => f.toLowerCase())));
     }
   }
@@ -96,6 +97,13 @@ function buildBuiltinFileSet(engine: EngineVersion): RtpFileSet {
 
 const BUILTIN_FS_2K = buildBuiltinFileSet('2k');
 const BUILTIN_FS_2K3 = buildBuiltinFileSet('2k3');
+/** 完整内置文件集（含音频，对齐仓库 public/rtp），用于解析 RTP 下载 URL */
+const FULL_FS_2K = buildBuiltinFileSet('2k', true);
+const FULL_FS_2K3 = buildBuiltinFileSet('2k3', true);
+
+function getFullBuiltinFileSet(engine: EngineVersion): RtpFileSet {
+  return engine === '2k3' ? FULL_FS_2K3 : FULL_FS_2K;
+}
 
 function getBuiltinFileSet(engine: EngineVersion): RtpFileSet {
   return engine === '2k3' ? BUILTIN_FS_2K3 : BUILTIN_FS_2K;
@@ -297,6 +305,28 @@ const MUSIC_WAV_STEMS = new Set([
   'se-jungle', 'se-ocean', 'se-quake', 'se-rain', 'se-torrent',
 ]);
 
+/** Vite 注入的 base 路径（tsx/node 等非 Vite 环境回退为 '/'） */
+const BASE_URL = (import.meta as any).env?.BASE_URL as string | undefined ?? '/';
+
+/** 用完整内置文件集（含音频）解析英文标准名 stem（小写）。不受在线版生产构建剔除音频影响。 */
+function lookupFullEnglishStem(
+  dbName: string,
+  category: AssetCategory,
+  engine: EngineVersion,
+): string | null {
+  if (!dbName) return null;
+  const rtpTableDir = CATEGORY_TO_RTP_DIR[category];
+  if (!rtpTableDir) return null;
+  const full = getFullBuiltinFileSet(engine);
+  const name = lookupRTPInFileSet(dbName, category, engine, full);
+  return name ? name.toLowerCase() : null;
+}
+
+/** stem 对应的下载扩展名（Music 目录里实为 wav 的 SE 用 .wav，其余按类别首选扩展名） */
+function rtpStemExt(stem: string, category: AssetCategory): string {
+  return (category === 'Music' && MUSIC_WAV_STEMS.has(stem)) ? '.wav' : getPrimaryExt(category);
+}
+
 /** Get bundle URL for built-in RTP asset */
 export function getRtpBundleUrl(
   dbName: string,
@@ -305,15 +335,44 @@ export function getRtpBundleUrl(
 ): string | null {
   const rtpTableDir = CATEGORY_TO_RTP_DIR[category];
   if (!rtpTableDir) return null;
-  // Look up English name in builtin file set
-  const enStem = lookupRTPInFileSet(dbName, category, engine, getBuiltinFileSet(engine));
-  if (!enStem) return null;
-  // Always use lowercase stem to match rtp-files.json canonical names
-  const stem = enStem.toLowerCase();
-  const ext = (category === 'Music' && MUSIC_WAV_STEMS.has(stem))
-    ? '.wav'
-    : getPrimaryExt(category);
-  return `${import.meta.env.BASE_URL}rtp/${engine}/${rtpTableDir}/${stem}${ext}`;
+  const stem = lookupFullEnglishStem(dbName, category, engine);
+  if (!stem) return null;
+  return `${import.meta.env.BASE_URL}rtp/${engine}/${rtpTableDir}/${stem}${rtpStemExt(stem, category)}`;
+}
+
+/**
+ * RTP 内置素材的下载候选 URL。
+ * 在线版生产构建不打包音频，本地 bundle 可能拿不到；
+ * 但仓库 public/rtp 完整托管了所有 RTP（含 music/sound），可回退到 GitHub raw 下载。
+ */
+const RTP_REPO_RAW_BASE = 'https://raw.githubusercontent.com/blanhhy/rm200x-material-manager/main/public';
+
+export interface RtpDownloadUrl { local?: string; repo?: string; }
+
+/** RTP 素材在仓库 public/ 下的相对路径（rtp/<engine>/<dir>/<stem>.<ext>），用作本地缓存键 */
+export function getRtpRelPath(
+  dbName: string,
+  category: AssetCategory,
+  engine: EngineVersion,
+): string | null {
+  const rtpTableDir = CATEGORY_TO_RTP_DIR[category];
+  if (!rtpTableDir) return null;
+  const stem = lookupFullEnglishStem(dbName, category, engine);
+  if (!stem) return null;
+  return `rtp/${engine}/${rtpTableDir}/${stem}${rtpStemExt(stem, category)}`;
+}
+
+export function getRtpDownloadUrl(
+  dbName: string,
+  category: AssetCategory,
+  engine: EngineVersion,
+): RtpDownloadUrl {
+  const relPath = getRtpRelPath(dbName, category, engine);
+  if (!relPath) return {};
+  return {
+    local: `${BASE_URL}${relPath}`,
+    repo: `${RTP_REPO_RAW_BASE}/${relPath}`,
+  };
 }
 
 // ── Disk RTP scanning ───────────────────────────────────────────────

@@ -6,8 +6,9 @@ import { useRebuildAnalyses } from './useRebuildAnalyses';
 import { pendingBlobBuffer } from './pendingBlobs';
 import type { BatchAction } from '../components/BatchModal';
 import { CATEGORY_EXTS, getPrimaryExt } from '../scanner/assetTypes';
-import { getRtpBundleUrl, lookupRTPFileInfo, resolveRtpDirName, getActiveRtpKind, getActiveRtpDiskHandle, buildRtpNormalizePlan } from '../core/rtpIndex';
+import { getRtpDownloadUrl, getRtpRelPath, lookupRTPFileInfo, resolveRtpDirName, getActiveRtpKind, getActiveRtpDiskHandle, buildRtpNormalizePlan } from '../core/rtpIndex';
 import { standardizeRtpReferences } from '../core/rtpStandardize';
+import { isAudioCategory, getCachedRtpBlob, putCachedRtpBlob } from '../core/rtpCache';
 
 export function useBatchActions(
   setSelectedKeys: (keys: Set<string>) => void,
@@ -60,12 +61,23 @@ export function useBatchActions(
       const rtpKind = getActiveRtpKind();
 
       if (rtpKind === 'builtin') {
-        const bundleUrl = getRtpBundleUrl(asset.name, asset.category, engine);
-        if (bundleUrl) {
-          try {
-            const resp = await fetch(bundleUrl);
-            if (resp.ok) blob = await resp.blob();
-          } catch {}
+        // 本地 bundle 优先；在线版断包音频时回退到仓库 raw 下载
+        const urls = getRtpDownloadUrl(asset.name, asset.category, engine);
+        const cacheKey = getRtpRelPath(asset.name, asset.category, engine) ?? '';
+        if (isAudioCategory(asset.category) && cacheKey) {
+          blob = await getCachedRtpBlob(cacheKey);
+        }
+        if (!blob) {
+          for (const u of [urls.local, urls.repo]) {
+            if (!u) continue;
+            try {
+              const resp = await fetch(u);
+              if (resp.ok) { blob = await resp.blob(); break; }
+            } catch {}
+          }
+          if (blob && isAudioCategory(asset.category) && cacheKey) {
+            await putCachedRtpBlob(cacheKey, blob);
+          }
         }
       } else if (rtpKind === 'disk') {
         const info = lookupRTPFileInfo(asset.name, asset.category, engine);
