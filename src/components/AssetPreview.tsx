@@ -199,12 +199,14 @@ export default function AssetPreview({
 
     const srcKind = getActiveRtpKind();
     let cancelled = false;
+    let urlToRevoke: string | null = null;
     (async () => {
       try {
+        let url: string | null = null;
         if (srcKind === 'builtin') {
           const blob = await fetchRtpBlob(asset.name, asset.category, engine);
           if (!blob || cancelled) return;
-          setRtpMediaUrl(URL.createObjectURL(blob));
+          url = URL.createObjectURL(blob);
         } else if (srcKind === 'disk') {
           const info = lookupRTPFileInfo(asset.name, asset.category, engine);
           if (!info) return;
@@ -218,11 +220,15 @@ export default function AssetPreview({
           if (!fileHandle || cancelled) return;
           const file = await fileHandle.getFile();
           if (cancelled) return;
-          setRtpMediaUrl(URL.createObjectURL(file));
+          url = URL.createObjectURL(file);
         }
+        if (!url) return;
+        urlToRevoke = url;
+        if (cancelled) { URL.revokeObjectURL(url); return; }
+        setRtpMediaUrl(url);
       } catch { /* file not found or read error */ }
     })();
-    return () => { cancelled = true; };
+    return () => { cancelled = true; if (urlToRevoke) { try { URL.revokeObjectURL(urlToRevoke); } catch {} } };
   }, [asset, analysis?.inRtp, engine, activeRtpSourceId]);
 
   const handleColorConfirm = useCallback(async (targetRGB: { r: number; g: number; b: number }) => {
