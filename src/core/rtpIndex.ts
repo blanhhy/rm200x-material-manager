@@ -347,9 +347,7 @@ export function getRtpBundleUrl(
  */
 const RTP_REPO_RAW_BASE = 'https://raw.githubusercontent.com/blanhhy/rm200x-material-manager/main/public';
 
-export interface RtpDownloadUrl { local?: string; repo?: string; }
-
-/** RTP 素材在仓库 public/ 下的相对路径（rtp/<engine>/<dir>/<stem>.<ext>），用作本地缓存键 */
+/** RTP 素材在仓库 public/ 下的相对路径（rtp/<engine>/<dir>/<stem>.<ext>），用作本地缓存键，与 BASE_URL / 域名解耦 */
 export function getRtpRelPath(
   dbName: string,
   category: AssetCategory,
@@ -362,17 +360,24 @@ export function getRtpRelPath(
   return `rtp/${engine}/${rtpTableDir}/${stem}${rtpStemExt(stem, category)}`;
 }
 
-export function getRtpDownloadUrl(
+/**
+ * 注入时的有序候选下载源。
+ * 本地 bundle 实际包含该文件时才放 local——生产构建不含音频，音频会直接跳过 local，避免必然 404；
+ * 仓库 raw 始终兜底（public/rtp 完整托管，含音频）。
+ */
+export function getRtpSourceUrls(
   dbName: string,
   category: AssetCategory,
   engine: EngineVersion,
-): RtpDownloadUrl {
+): string[] {
   const relPath = getRtpRelPath(dbName, category, engine);
-  if (!relPath) return {};
-  return {
-    local: `${BASE_URL}${relPath}`,
-    repo: `${RTP_REPO_RAW_BASE}/${relPath}`,
-  };
+  if (!relPath) return [];
+  const urls: string[] = [];
+  if (lookupRTPInFileSet(dbName, category, engine, getBuiltinFileSet(engine))) {
+    urls.push(`${BASE_URL}${relPath}`);
+  }
+  urls.push(`${RTP_REPO_RAW_BASE}/${relPath}`);
+  return urls;
 }
 
 // ── Disk RTP scanning ───────────────────────────────────────────────

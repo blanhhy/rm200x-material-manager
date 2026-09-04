@@ -1,8 +1,9 @@
-import type { AssetCategory } from '../types/index';
+// RTP 素材 blob 的浏览器本地缓存（IndexedDB）。
+// 注入时下载的素材（图片或音频）缓存下来，之后离线/再次注入同一素材直接读本地，免重复下载。
+// 仅在线版（生产构建）启用：本地 dev 下素材走本机 dev server，fetch 瞬间完成，无缓存必要。
 
-// RTP 音频 blob 的浏览器本地缓存（IndexedDB）。
-// 在线版生产构建不打包音频，注入时需从 GitHub raw 下载；
-// 下载后把 blob 缓存起来，之后离线/再次注入同一素材直接读本地，免重复下载。
+// Vite 注入的开发模式标记（tsx/node 等非 Vite 环境无值，按非 dev 处理）
+const IS_DEV = (import.meta as any).env?.DEV === true;
 
 const DB_NAME = 'rmm-rtp-cache';
 const STORE_NAME = 'blobs';
@@ -30,12 +31,8 @@ function openDb(): Promise<IDBDatabase> {
   return dbPromise;
 }
 
-export function isAudioCategory(category: AssetCategory): boolean {
-  return category === 'Music' || category === 'Sound';
-}
-
 export async function getCachedRtpBlob(key: string): Promise<Blob | null> {
-  if (!key) return null;
+  if (!key || IS_DEV) return null;
   try {
     const db = await openDb();
     return await new Promise<Blob | null>((resolve, reject) => {
@@ -50,7 +47,7 @@ export async function getCachedRtpBlob(key: string): Promise<Blob | null> {
 }
 
 export async function putCachedRtpBlob(key: string, blob: Blob): Promise<void> {
-  if (!key) return;
+  if (!key || IS_DEV) return;
   try {
     const db = await openDb();
     await new Promise<void>((resolve, reject) => {

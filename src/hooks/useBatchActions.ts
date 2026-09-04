@@ -6,9 +6,9 @@ import { useRebuildAnalyses } from './useRebuildAnalyses';
 import { pendingBlobBuffer } from './pendingBlobs';
 import type { BatchAction } from '../components/BatchModal';
 import { CATEGORY_EXTS, getPrimaryExt } from '../scanner/assetTypes';
-import { getRtpDownloadUrl, getRtpRelPath, lookupRTPFileInfo, resolveRtpDirName, getActiveRtpKind, getActiveRtpDiskHandle, buildRtpNormalizePlan } from '../core/rtpIndex';
+import { getRtpSourceUrls, getRtpRelPath, lookupRTPFileInfo, resolveRtpDirName, getActiveRtpKind, getActiveRtpDiskHandle, buildRtpNormalizePlan } from '../core/rtpIndex';
 import { standardizeRtpReferences } from '../core/rtpStandardize';
-import { isAudioCategory, getCachedRtpBlob, putCachedRtpBlob } from '../core/rtpCache';
+import { getCachedRtpBlob, putCachedRtpBlob } from '../core/rtpCache';
 
 export function useBatchActions(
   setSelectedKeys: (keys: Set<string>) => void,
@@ -61,21 +61,19 @@ export function useBatchActions(
       const rtpKind = getActiveRtpKind();
 
       if (rtpKind === 'builtin') {
-        // 本地 bundle 优先；在线版断包音频时回退到仓库 raw 下载
-        const urls = getRtpDownloadUrl(asset.name, asset.category, engine);
+        // 图片与音频同构：先查本地缓存，未命中按候选源顺序下载后写回缓存
         const cacheKey = getRtpRelPath(asset.name, asset.category, engine) ?? '';
-        if (isAudioCategory(asset.category) && cacheKey) {
+        if (cacheKey) {
           blob = await getCachedRtpBlob(cacheKey);
         }
         if (!blob) {
-          for (const u of [urls.local, urls.repo]) {
-            if (!u) continue;
+          for (const u of getRtpSourceUrls(asset.name, asset.category, engine)) {
             try {
               const resp = await fetch(u);
               if (resp.ok) { blob = await resp.blob(); break; }
             } catch {}
           }
-          if (blob && isAudioCategory(asset.category) && cacheKey) {
+          if (blob && cacheKey) {
             await putCachedRtpBlob(cacheKey, blob);
           }
         }
