@@ -159,25 +159,6 @@ function extractMapTexts(bufs: Uint8Array[], enc: EncodingName, engine: EngineVe
 }
 
 /**
- * 剥离 RM2k/2k3 消息控制码，只留真正显示给玩家的字。
- * 控制码本身是 ASCII，留着会稀释汉字/假名占比、干扰编码评分。
- *
- * 依据 EasyRPG Player 的 window_message.cpp / game_message.cpp：
- *   带参数：\c[n] 颜色  \s[n] 速度  \n[n] 角色名  \v[n] 变量  \t[n] 字符串
- *   单字符：\\ \$ \_ \! \. \| \^ \> \<
- *   ExFont：$A-$Z / $a-$z → 图标（非文字，不参与语言判别）
- */
-function stripMessageCodes(s: string): string {
-  return s
-    .replace(/\\\\/g, '')                    // \\ 反斜杠字面量
-    .replace(/\\[cCsSnNvVtT]\[[^\]]*\]/g, '') // \c[n] \s[n] \n[n] \v[n] \t[n]
-    .replace(/\\[cC](?!\[)/g, '')            // 不带 [] 的 \c 退化为颜色 0
-    .replace(/\$[A-Za-z]/g, '')              // ExFont 图标
-    .replace(/\\[$!.|^><]/g, '')             // \$ \! \. \| \^ \> \<
-    .replace(/\\_/g, ' ');                   // \_ 是半角空格，保留为空格
-}
-
-/**
  * 纯 ASCII 文本对编码判别零信息量（无高位字节，各候选编码解出的结果完全相同），
  * 但会严重稀释汉字/假名占比，必须在评分前剔除，否则中文游戏的 hanziRatio 会被压到阈值以下。
  */
@@ -204,10 +185,8 @@ function scoreEncoding(
       displayTexts = [...displayTexts, ...extraTexts];
     }
   }
-  // 剥控制码并丢掉纯 ASCII 文本
-  displayTexts = displayTexts
-    .map(stripMessageCodes)
-    .filter(hasNonAscii);
+  // 丢掉纯 ASCII 文本（控制码本身是 ASCII，会被 scoreCharStats 归为 neutral，无需额外剥离）
+  displayTexts = displayTexts.filter(hasNonAscii);
   const reasons: string[] = [];
   let total = 0;
 
