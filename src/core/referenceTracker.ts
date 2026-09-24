@@ -454,7 +454,7 @@ function parseMoveCommandsFromParams(
   let i = startOffset;
   while (i < params.length) {
     const cmdId = params[i++];
-    if (cmdId === 0) break;
+    // 注意：0 = moveUp（合法无参命令），不是终止符；列表以数组结束为止（见 rpgrt decodeMoveCommand）
     const mc: InlineMoveCommand = { commandId: cmdId, parameterString: null };
     switch (cmdId) {
       case MoveCmdCode.changeGraphic: {
