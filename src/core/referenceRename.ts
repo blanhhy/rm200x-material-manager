@@ -4,17 +4,27 @@ import {
   encodeTreeMap,
 } from 'rpgrt';
 import type { Database, MapUnit, TreeMap } from 'rpgrt';
-import type { AssetFile, ProjectGameData } from '../types/index';
+import type { AssetCategory, AssetFile, ProjectGameData } from '../types/index';
 import { createSnapshot } from './snapshot';
 import { prefetchedFileData } from '../scanner/assetScanner';
 import { makeTranscoder, writeFile } from './internal/lcfIo';
 import { applyRenameToDatabase, applyRenameToMapInfo, applyRenameToMapUnit } from './renameEngine';
-import type { RtpNormalizeItem } from './rtpIndex';
 
-export interface RtpStandardizeResult {
+export interface ReferenceRenameItem {
+  category: AssetCategory;
+  oldName: string;
+  newName: string;
+}
+
+export interface ReferenceRenameOptions {
+  /** 操作名，用于快照标签与结果消息，如 "RTP标准化"、"转为GBK" */
+  actionLabel: string;
+}
+
+export interface ReferenceRenameResult {
   success: boolean;
   message: string;
-  pairs: number;                    // 实际执行的重命名对数
+  pairs: number;                    // 实际执行的改名组数
   refsChanged: boolean;             // 是否有 LCF 引用被改写
   filesWritten: string[];
   filesRenamed: string[];           // "dir/old → new"
@@ -22,16 +32,20 @@ export interface RtpStandardizeResult {
 }
 
 /**
- * 批量把 RTP 引用从其本地化名改写成英文标准名：
- * 1. 改写 DB / LMT / LMU 里的引用（一次快照 + 一次写入）
- * 2. 若同名素材文件在游戏目录里，一并重命名磁盘文件
- * 3. 同步更新 rawLdb / rawLmt / data.maps
+ * 批量改写 DB / LMT / LMU 里的素材引用名：
+ * 1. 一次快照覆盖所有将改写的 LCF 与被改名的物理文件
+ * 2. 改写引用（DB / LMT / LMU）
+ * 3. 若旧名同名素材文件在游戏目录里，一并重命名磁盘文件
+ * 4. 同步更新 rawLdb / rawLmt / data.maps
+ *
+ * 调用方负责给出改名清单与操作名（RTP标准化 / 转为GBK 等）。
  */
-export async function standardizeRtpReferences(
+export async function applyReferenceRenames(
   data: ProjectGameData,
-  plan: RtpNormalizeItem[],
+  plan: ReferenceRenameItem[],
   assets: AssetFile[],
-): Promise<RtpStandardizeResult> {
+  opts: ReferenceRenameOptions,
+): Promise<ReferenceRenameResult> {
   const failed = { success: false, message: '', pairs: 0, refsChanged: false, filesWritten: [], filesRenamed: [], skipped: [] as string[] };
 
   if (!data.encoding) {
@@ -40,7 +54,7 @@ export async function standardizeRtpReferences(
   const transcoder = makeTranscoder(data.encoding);
 
   // 折叠脏数据 + 检测目标名冲突（目标名不能顶着另一个待改名的旧名）
-  const items: RtpNormalizeItem[] = [];
+  const items: ReferenceRenameItem[] = [];
   const allOld = new Map<string, string>();   // lowercase newName -> oldName
   for (const item of plan) {
     const oldName = item.oldName?.trim();
@@ -51,11 +65,11 @@ export async function standardizeRtpReferences(
     items.push({ category: item.category, oldName, newName });
   }
   if (items.length === 0) {
-    return { success: true, message: '没有需要标准化的 RTP 引用', pairs: 0, refsChanged: false, filesWritten: [], filesRenamed: [], skipped: [] };
+    return { success: true, message: '没有需要改写的引用', pairs: 0, refsChanged: false, filesWritten: [], filesRenamed: [], skipped: [] };
   }
 
   const skipped: string[] = [];
-  const activeItems: RtpNormalizeItem[] = [];
+  const activeItems: ReferenceRenameItem[] = [];
   for (const item of items) {
     const targetKey = item.newName.toLowerCase();
     const oldOfTarget = allOld.get(targetKey);
@@ -112,7 +126,7 @@ export async function standardizeRtpReferences(
   }
   const toRenameDisk = activeItems
     .map(item => ({ item, asset: stemToAsset.get(`${item.category}\u0000${item.oldName.toLowerCase()}`) }))
-    .filter((x): x is { item: RtpNormalizeItem; asset: AssetFile } => !!x.asset);
+    .filter((x): x is { item: ReferenceRenameItem; asset: AssetFile } => !!x.asset);
 
   // 快照：一次覆盖 LCF 写入 + 将被改名文件的旧内容
   const oldPaths = toRenameDisk.map(x => x.asset.path);
@@ -127,7 +141,7 @@ export async function standardizeRtpReferences(
   for (const r of blobResults) if (r.status === 'fulfilled') blobs.set(r.value.path, r.value.blob);
 
   if (willWrite.length > 0 || oldPaths.length > 0) {
-    await createSnapshot(root, willWrite, undefined, oldPaths, blobs, `RTP标准化：${activeItems.length} 组引用`);
+    await createSnapshot(root, willWrite, undefined, oldPaths, blobs, `${opts.actionLabel}：${activeItems.length} 组引用`);
   }
 
   const filesWritten: string[] = [];
@@ -198,17 +212,18 @@ export async function standardizeRtpReferences(
   }
   for (const [mapId, muClone] of mapClones) data.maps.set(mapId, muClone);
 
+  const refsChanged = dbChanged || changedMapInfoIds.size > 0 || changedMapIds.size > 0;
   const pairs = activeItems.length;
-  let msg = `已标准化 ${pairs} 个 RTP 引用`;
+  let msg = `${opts.actionLabel}：已改写 ${pairs} 组引用`;
   if (filesRenamed.length > 0) msg += `，重命名 ${filesRenamed.length} 个磁盘文件`;
   if (skipped.length > 0) msg += `，跳过 ${skipped.length} 项`;
-  console.log(`[RTP-STD] ${msg} | refsChanged=${dbChanged || changedMapInfoIds.size > 0 || changedMapIds.size > 0}`);
+  console.log(`[RENAME-PLAN] ${msg} | refsChanged=${refsChanged}`);
 
   return {
     success: skipped.length === 0,
     message: msg,
     pairs,
-    refsChanged: dbChanged || changedMapInfoIds.size > 0 || changedMapIds.size > 0,
+    refsChanged,
     filesWritten,
     filesRenamed,
     skipped,

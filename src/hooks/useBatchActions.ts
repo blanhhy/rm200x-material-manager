@@ -7,7 +7,9 @@ import { pendingBlobBuffer } from './pendingBlobs';
 import type { BatchAction } from '../components/BatchModal';
 import { CATEGORY_EXTS, getPrimaryExt } from '../scanner/assetTypes';
 import { lookupRTPFileInfo, resolveRtpDirName, getActiveRtpKind, getActiveRtpDiskHandle, buildRtpNormalizePlan, isRTPAsset } from '../core/rtpIndex';
-import { standardizeRtpReferences } from '../core/rtpStandardize';
+import { applyReferenceRenames } from '../core/referenceRename';
+import type { ReferenceRenameItem } from '../core/referenceRename';
+import { buildGbkConvertPlan } from '../core/gbkConvert';
 import { fetchRtpBlob } from '../core/rtpCache';
 
 export function useBatchActions(
@@ -223,6 +225,27 @@ export function useBatchActions(
     }
   }
 
+  /** 执行引用改名计划：写回 LCF → 重扫磁盘 → 重建分析 → 刷新快照 */
+  async function runRenamePlan(plan: ReferenceRenameItem[], actionLabel: string) {
+    setBatchAction(null);
+    setLoading(true);
+    try {
+      const result = await applyReferenceRenames(gameData!, plan, assets, { actionLabel });
+      // 引用名已变，重扫磁盘 + 重建分析（磁盘文件可能一并改名，需重取 handle）
+      const found = await scanProjectAssets(gameData!.rootHandle!);
+      await rebuild(gameData!, found);
+      setSelectedKeys(new Set());
+      setSelectedAssetKey(null);
+      await refreshSnapshots(gameData!.rootHandle);
+      if (result.skipped.length > 0) console.warn(`[${actionLabel}] 跳过的项：`, result.skipped);
+      alert(result.message);
+    } catch (e) {
+      alert(`${actionLabel}失败：` + (e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleNormalizeRtp(cats: string[]) {
     const catSet = new Set(cats);
     const plan = buildRtpNormalizePlan(
@@ -230,24 +253,17 @@ export function useBatchActions(
       gameData!.engine,
     ).filter(i => catSet.has(i.category));
     if (plan.length === 0) { alert('所选类别中没有需要标准化的 RTP 引用'); return; }
+    await runRenamePlan(plan, 'RTP标准化');
+  }
 
-    setBatchAction(null);
-    setLoading(true);
-    try {
-      const result = await standardizeRtpReferences(gameData!, plan, assets);
-      // 重扫磁盘 + 重建引用分析（文件名已变，需重取 handle）
-      const found = await scanProjectAssets(gameData!.rootHandle!);
-      await rebuild(gameData!, found);
-      setSelectedKeys(new Set());
-      setSelectedAssetKey(null);
-      await refreshSnapshots(gameData!.rootHandle);
-      if (result.skipped.length > 0) console.warn('[RTP-STD] 跳过的项：', result.skipped);
-      alert(result.message);
-    } catch (e) {
-      alert('RTP 标准化失败：' + (e as Error).message);
-    } finally {
-      setLoading(false);
-    }
+  async function handleGbkConvert(cats: string[]) {
+    const catSet = new Set(cats);
+    const plan = buildGbkConvertPlan(
+      Array.from(analyses.values()).flatMap(a => a.references),
+      gameData!.encoding,
+    ).filter(i => catSet.has(i.category));
+    if (plan.length === 0) { alert('所选类别中没有需要转为 GBK 的引用名'); return; }
+    await runRenamePlan(plan, '转为GBK');
   }
 
   async function handleBatchConfirm(cats: string[]) {
@@ -256,6 +272,7 @@ export function useBatchActions(
     else if (batchAction === 'cleanUnused') await handleCleanUnused(cats);
     else if (batchAction === 'clearMissing') await handleClearMissing(cats);
     else if (batchAction === 'normalizeRtp') await handleNormalizeRtp(cats);
+    else if (batchAction === 'toGbk') await handleGbkConvert(cats);
   }
 
   return { batchAction, setBatchAction, handleBatchConfirm };

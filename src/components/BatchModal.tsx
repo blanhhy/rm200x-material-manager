@@ -2,8 +2,9 @@ import { useState, useMemo } from 'react';
 import { useStore } from '../store/useStore';
 import { getCategories } from '../scanner/assetTypes';
 import { buildRtpNormalizePlan, isRTPAsset } from '../core/rtpIndex';
+import { buildGbkConvertPlan } from '../core/gbkConvert';
 
-export type BatchAction = 'injectRtp' | 'pruneRtp' | 'cleanUnused' | 'clearMissing' | 'normalizeRtp';
+export type BatchAction = 'injectRtp' | 'pruneRtp' | 'cleanUnused' | 'clearMissing' | 'normalizeRtp' | 'toGbk';
 
 const LABELS: Record<BatchAction, string> = {
   injectRtp: '注入RTP',
@@ -11,6 +12,7 @@ const LABELS: Record<BatchAction, string> = {
   cleanUnused: '清理无用素材',
   clearMissing: '清除无效引用',
   normalizeRtp: 'RTP 名称标准化',
+  toGbk: '转为GBK',
 };
 
 interface Props {
@@ -45,6 +47,12 @@ export default function BatchModal({ action, onClose, onConfirm }: Props) {
         gameData?.engine ?? '2k3',
       );
       for (const item of plan) m.set(item.category, (m.get(item.category) || 0) + 1);
+    } else if (action === 'toGbk') {
+      const enc = gameData?.encoding;
+      if (enc) {
+        const plan = buildGbkConvertPlan(allAnalyses.flatMap(a => a.references), enc);
+        for (const item of plan) m.set(item.category, (m.get(item.category) || 0) + 1);
+      }
     }
     return m;
   }, [analyses, action, gameData]);

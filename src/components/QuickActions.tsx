@@ -23,6 +23,7 @@ export default function QuickActions({ onAction }: Props) {
             ['injectRtp', '注入RTP', '将所选RTP源中的素材复制到项目目录，消除依赖'],
             ['pruneRtp', '精简RTP', '删除项目目录里能依赖RTP的素材，精简游戏体积'],
             ['normalizeRtp', 'RTP标准化', '将所有RTP引用重命名为英文标准名'],
+            ['toGbk', '转为GBK', '把被误读为乱码的Shift_JIS素材引用名转为GBK编码'],
             ['cleanUnused', '清理无用素材', '删除磁盘上有但数据库未引用的素材'],
             ['clearMissing', '清除无效引用', '清除指向已缺失素材的数据库引用'],
           ] as const).map(([id, label, desc]) => (

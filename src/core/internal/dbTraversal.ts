@@ -138,6 +138,13 @@ export function traverseDatabase(
   for (const enemy of db.enemies ?? [])
     visit(enemy.battlerName, 'Monster', v => { enemy.battlerName = v; });
 
+  // ── Skills ──
+  // skill.soundEffect 是技能使用音效（Sound），referenceTracker 会追踪，改写时不能漏
+  for (const skill of db.skills ?? []) {
+    const se = skill.soundEffect as { name?: string } | undefined;
+    if (se?.name) visit(se.name, 'Sound', v => { se.name = v; });
+  }
+
   // ── Animations ──
   for (const anim of db.animations ?? []) {
     visit(anim.animationName, anim.large ? 'Battle2' : 'Battle', v => { anim.animationName = v; });
