@@ -11,7 +11,7 @@ import type {
 import { EventCommandCode as EventCmdCode, MoveCommandCode as MoveCmdCode } from 'rpgrt';
 import type { AssetCategory, AssetReference, ReferenceLocation, ProjectGameData } from '../types/index';
 import { makeTranscoder } from './internal/lcfIo';
-import { SYSTEM_STRING_FIELDS, SYSTEM_AUDIO_FIELDS } from './internal/assetFieldMap';
+import { refCatForEventCode, SYSTEM_STRING_FIELDS, SYSTEM_AUDIO_FIELDS } from './internal/assetFieldMap';
 
 const UNKNOWN_NAMES = new Set(['', '(OFF)']);
 
@@ -165,6 +165,7 @@ const EVENT_CMD_NAMES: Partial<Record<number, string>> = {
   [EventCmdCode.ChangeMapTileset]:          'ChangeMapTileset',
   [EventCmdCode.ChangePBG]:                 'ChangePBG',
   [EventCmdCode.ChangeBattleBG]:            'ChangeBattleBG',
+  [EventCmdCode.EnemyEncounter]:            'EnemyEncounter',
   [EventCmdCode.ShowBattleAnimationB]:      'ShowBattleAnimationB', 
 };
 
@@ -331,33 +332,7 @@ function traceEventCommands(
     const loc = cmdName ? locWithCmdName(locWithIdx, cmdName) : locWithIdx;
 
     switch (cmd.code) {
-      case EventCmdCode.ChangeFaceGraphic:
-        if (validName(cmd.string)) pushRef(refs, 'FaceSet', cmd.string, locWithField(loc, 'ChangeFaceGraphic'));
-        break;
-      case EventCmdCode.ChangeSpriteAssociation:
-        if (validName(cmd.string)) pushRef(refs, 'CharSet', cmd.string, locWithField(loc, 'ChangeSpriteAssociation'));
-        break;
-      case EventCmdCode.ChangeActorFace:
-        if (validName(cmd.string)) pushRef(refs, 'FaceSet', cmd.string, locWithField(loc, 'ChangeActorFace'));
-        break;
-      case EventCmdCode.ChangeVehicleGraphic:
-        if (validName(cmd.string)) pushRef(refs, 'CharSet', cmd.string, locWithField(loc, 'ChangeVehicleGraphic'));
-        break;
-      case EventCmdCode.ChangeSystemBGM:
-        if (validName(cmd.string)) pushRef(refs, 'Music', cmd.string, locWithField(loc, 'ChangeSystemBGM'));
-        break;
-      case EventCmdCode.ChangeSystemSFX:
-        if (validName(cmd.string)) pushRef(refs, 'Sound', cmd.string, locWithField(loc, 'ChangeSystemSFX'));
-        break;
-      case EventCmdCode.ChangeSystemGraphics: 
-        if (validName(cmd.string)) pushRef(refs, 'System', cmd.string, locWithField(loc, 'ChangeSystemGraphics'));
-        break;
-      case EventCmdCode.ChangeScreenTransitions:
-        if (validName(cmd.string)) pushRef(refs, 'System', cmd.string, locWithField(loc, 'ChangeScreenTransitions'));
-        break;
-      case EventCmdCode.ShowPicture:
-        if (validName(cmd.string)) pushRef(refs, 'Picture', cmd.string, locWithField(loc, 'ShowPicture'));
-        break;
+      // 间接引用：命令只带 id，名字得去别的表里查
       case EventCmdCode.ShowBattleAnimation: {
         const animId = p[0];
         if (validIdx(animId, db.animations ?? [])) {
@@ -369,16 +344,7 @@ function traceEventCommands(
         }
         break;
       }
-      case EventCmdCode.PlayBGM:
-        if (validName(cmd.string)) pushRef(refs, 'Music', cmd.string, locWithField(loc, 'PlayBGM'));
-        break;
-      case EventCmdCode.PlaySound:
-        if (validName(cmd.string)) pushRef(refs, 'Sound', cmd.string, locWithField(loc, 'PlaySound'));
-        break;
-      case EventCmdCode.PlayMovie:
-        if (validName(cmd.string)) pushRef(refs, 'Movie', cmd.string, locWithField(loc, 'PlayMovie'));
-        break;
-      case EventCmdCode.ChangeMapTileset: { 
+      case EventCmdCode.ChangeMapTileset: {
         const csId = p[0];
         if (validIdx(csId, db.chipsets ?? [])) {
           const cs = db.chipsets[csId];
@@ -388,12 +354,6 @@ function traceEventCommands(
         }
         break;
       }
-      case EventCmdCode.ChangePBG:
-        if (validName(cmd.string)) pushRef(refs, 'Panorama', cmd.string, locWithField(loc, 'ChangePBG'));
-        break;
-      case EventCmdCode.ChangeBattleBG:
-        if (validName(cmd.string)) pushRef(refs, 'Backdrop', cmd.string, locWithField(loc, 'ChangeBattleBG'));
-        break;
       case EventCmdCode.ShowBattleAnimationB: {
         const animId = p[0];
         if (validIdx(animId, db.animations ?? [])) {
@@ -415,6 +375,15 @@ function traceEventCommands(
           } else if (mc.commandId === MoveCmdCode.playSoundEffect && validName(mc.parameterString)) {
             pushRef(refs, 'Sound', mc.parameterString!, locWithField(locWithSubIdx(loc, ci), mcName));
           }
+        }
+        break;
+      }
+      default: {
+        // 其余命令的 string 槽直接存素材名，类别统一由 assetFieldMap 决定，
+        // 与改写侧（dbTraversal）共用同一份映射，避免两侧各写一套 switch 后漂移
+        const cat = refCatForEventCode(cmd.code);
+        if (cat && validName(cmd.string)) {
+          pushRef(refs, cat, cmd.string, locWithField(loc, cmdName ?? String(cmd.code)));
         }
         break;
       }

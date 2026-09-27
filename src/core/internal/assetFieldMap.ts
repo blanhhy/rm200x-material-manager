@@ -25,6 +25,8 @@ export function refCatForEventCode(code: number): AssetCategory | null {
     case EventCmdCode.PlayMovie:               return 'Movie';
     case EventCmdCode.ChangePBG:               return 'Panorama';
     case EventCmdCode.ChangeBattleBG:          return 'Backdrop';
+    // 2k3 敌群遭遇：string 槽存本条战斗的背景图名（Backdrop/），留空表示用默认背景
+    case EventCmdCode.EnemyEncounter:          return 'Backdrop';
     default: return null;
   }
 }
