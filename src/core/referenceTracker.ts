@@ -345,9 +345,10 @@ function traceEventCommands(
         break;
       }
       case EventCmdCode.ChangeMapTileset: {
-        const csId = p[0];
-        if (validIdx(csId, db.chipsets ?? [])) {
-          const cs = db.chipsets[csId];
+        // 同 MapUnit.chipsetId：参数是 1 基记录 id（0 = 用默认芯片集），不是数组下标
+        const csIdx = p[0] - 1;
+        if (validIdx(csIdx, db.chipsets ?? [])) {
+          const cs = db.chipsets[csIdx];
           if (validName(cs.chipsetName)) {
             pushRef(refs, 'ChipSet', cs.chipsetName, locWithField(loc, 'ChangeMapTileset'));
           }
@@ -462,8 +463,10 @@ function traceMapUnit(
   if (validName(mu.parallaxName)) {
     pushRef(refs, 'Panorama', mu.parallaxName, { kind: 'MapUnit', mapId, field: 'parallaxName' });
   }
-  if (validIdx(mu.chipsetId, db.chipsets ?? [])) {
-    const cs = db.chipsets[mu.chipsetId];
+  // LMU 的 chipsetId 是 1 基记录 id（rpgrt 默认值 1），不是数组下标
+  const chipsetIdx = mu.chipsetId - 1;
+  if (validIdx(chipsetIdx, db.chipsets ?? [])) {
+    const cs = db.chipsets[chipsetIdx];
     if (validName(cs.chipsetName)) {
       pushRef(refs, 'ChipSet', cs.chipsetName, { kind: 'MapUnit', mapId, field: 'chipsetId' });
     }
