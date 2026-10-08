@@ -9,6 +9,7 @@ import { createSnapshot } from './snapshot';
 import { prefetchedFileData } from '../scanner/assetScanner';
 import { makeTranscoder, writeFile } from './internal/lcfIo';
 import { dirRelOf, getDirHandleByRelPath } from './internal/fsPath';
+import { refBaseOf } from './assetPath';
 import { applyRenameToDatabase, applyRenameToMapInfo, applyRenameToMapUnit } from './renameEngine';
 
 export interface ReferenceRenameItem {
@@ -62,7 +63,6 @@ export async function applyReferenceRenames(
     const newName = item.newName?.trim();
     if (!oldName || !newName) continue;
     if (oldName.toLowerCase() === newName.toLowerCase()) continue;
-    if (/[/\\]/.test(oldName) || /[/\\]/.test(newName)) continue;
     items.push({ category: item.category, oldName, newName });
   }
   if (items.length === 0) {
@@ -125,9 +125,16 @@ export async function applyReferenceRenames(
   for (const a of assets) {
     if (a.handle !== undefined) stemToAsset.set(`${a.category}\u0000${(a.refName ?? a.stem).toLowerCase()}`, a);
   }
+  // 同一个物理文件可能被多个类别引用（各自一条资产记录），只改名一次
+  const renamedPaths = new Set<string>();
   const toRenameDisk = activeItems
     .map(item => ({ item, asset: stemToAsset.get(`${item.category}\u0000${item.oldName.toLowerCase()}`) }))
-    .filter((x): x is { item: ReferenceRenameItem; asset: AssetFile } => !!x.asset);
+    .filter((x): x is { item: ReferenceRenameItem; asset: AssetFile } => !!x.asset)
+    .filter(x => {
+      if (renamedPaths.has(x.asset.path)) return false;
+      renamedPaths.add(x.asset.path);
+      return true;
+    });
 
   // 快照：一次覆盖 LCF 写入 + 将被改名文件的旧内容
   const oldPaths = toRenameDisk.map(x => x.asset.path);
@@ -175,8 +182,9 @@ export async function applyReferenceRenames(
   };
 
   for (const { item, asset } of toRenameDisk) {
+    // 相对路径引用只改文件名段，目录取自资产的实际落点（asset.path）
     const dirDir = dirRelOf(asset.path);
-    const newFileName = item.newName + asset.ext;
+    const newFileName = refBaseOf(item.newName) + asset.ext;
     const caseOnly = item.oldName.toLowerCase() === item.newName.toLowerCase();
     try {
       const dirHandle = await getDir(dirDir);

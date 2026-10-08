@@ -63,6 +63,21 @@ export function refDirOf(assetName: string): string {
 }
 
 /**
+ * 引用名的目录前缀，**连同末尾的分隔符**（`/` 或 `\` 都认）。
+ * 之所以保留原分隔符，是因为要原样写回 LCF —— 引用名里用的是哪种就还它哪种。
+ * `../Monster/a` → `../Monster/`；`dir\a` → `dir\`；`a` → ``
+ */
+export function refHeadOf(assetName: string): string {
+  const i = Math.max(assetName.lastIndexOf('/'), assetName.lastIndexOf('\\'));
+  return i < 0 ? '' : assetName.slice(0, i + 1);
+}
+
+/** 引用名的文件名部分（去掉目录前缀）：`../Monster/a` → `a`；`dir\a` → `a` */
+export function refBaseOf(assetName: string): string {
+  return assetName.slice(refHeadOf(assetName).length);
+}
+
+/**
  * 引用的规范身份键（assetName 为引用名原文，可含 `../`）。
  *
  * 引用名本身不含扩展名，扩展名是引擎查找时补上的，所以这里**不能**去尾。

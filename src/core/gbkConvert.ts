@@ -1,5 +1,6 @@
 import iconv from 'iconv-lite';
 import type { AssetCategory, AssetReference } from '../types/index';
+import { refHeadOf } from './assetPath';
 
 /** Shift_JIS 半角假名区（U+FF61–U+FF9F） */
 const HALF_WIDTH_KANA = /[\uFF61-\uFF9F]/;
@@ -47,10 +48,16 @@ export function buildGbkConvertPlan(
   const seen = new Map<string, GbkConvertItem>();
   for (const r of refs) {
     if (!r.assetName) continue;
-    const converted = sjisNameToGbk(r.assetName, projectEnc);
+    const oldName = r.assetName.trim();
+    if (!oldName) continue;
+    // 相对路径引用（如 `../Monster/a`、`dir\a`）只转换**文件名段**：
+    // 目录段是文件系统实体，本工具不改目录名；若连目录段一起转成日文，
+    // 游戏按项目编码解码后请求的路径就和磁盘上的目录对不上了
+    const head = refHeadOf(oldName);
+    const converted = sjisNameToGbk(oldName.slice(head.length), projectEnc);
     if (!converted) continue;
-    const key = `${r.category}\u0000${r.assetName.trim().toLowerCase()}`;
-    if (!seen.has(key)) seen.set(key, { category: r.category, oldName: r.assetName.trim(), newName: converted });
+    const key = `${r.category}\u0000${oldName.toLowerCase()}`;
+    if (!seen.has(key)) seen.set(key, { category: r.category, oldName, newName: head + converted });
   }
   return Array.from(seen.values());
 }
