@@ -228,7 +228,8 @@ export function traverseMapInfo(mi: MapInfo, checker: FieldChecker): boolean {
     const m = mi.music as { name?: string } | undefined;
     if (m?.name) visit(m.name, 'Music', v => { m.name = v; });
   }
-  if (mi.backgroundName) visit(mi.backgroundName, 'Picture', v => { mi.backgroundName = v; });
+  // MapInfo.background_name 是地图的"战斗背景"指定，与 Terrain.background_name 同一概念
+  if (mi.backgroundName) visit(mi.backgroundName, 'Backdrop', v => { mi.backgroundName = v; });
 
   return abort;
 }

@@ -8,6 +8,7 @@ import type { AssetCategory, AssetFile, ProjectGameData } from '../types/index';
 import { createSnapshot } from './snapshot';
 import { prefetchedFileData } from '../scanner/assetScanner';
 import { makeTranscoder, writeFile } from './internal/lcfIo';
+import { dirRelOf, getDirHandleByRelPath } from './internal/fsPath';
 import { traverseDatabase, traverseMapUnit, traverseMapInfo } from './internal/dbTraversal';
 import type { FieldChecker } from './internal/dbTraversal';
 
@@ -35,7 +36,7 @@ function groupNamesByCategory(assets: AssetFile[]): Map<AssetCategory, Set<strin
   for (const a of assets) {
     let set = map.get(a.category);
     if (!set) { set = new Set(); map.set(a.category, set); }
-    set.add(a.stem.trim().toLowerCase());
+    set.add((a.refName ?? a.stem).trim().toLowerCase());
   }
   return map;
 }
@@ -245,14 +246,14 @@ export async function deleteAssets(
 
   console.time('[DELETE] disk-delete');
   const dirCache = new Map<string, FileSystemDirectoryHandle>();
-  const getDir = async (dirName: string) => {
-    let h = dirCache.get(dirName);
-    if (!h) { h = await root.getDirectoryHandle(dirName); dirCache.set(dirName, h); }
+  const getDir = async (dirRel: string) => {
+    let h = dirCache.get(dirRel);
+    if (!h) { h = await getDirHandleByRelPath(root, dirRel); dirCache.set(dirRel, h); }
     return h;
   };
   const deleteRslts = await Promise.allSettled(
     diskAssets.map(async (a) => {
-      const dirHandle = await getDir(a.path.split('/')[0]);
+      const dirHandle = await getDir(dirRelOf(a.path));
       await dirHandle.removeEntry(a.name);
       return a.path;
     })

@@ -19,6 +19,7 @@ import FilterDropdown from './components/FilterDropdown';
 import TaskPanel from './components/TaskPanel';
 import { initBuiltinRtp } from './core/rtpIndex';
 import { getCategories } from './scanner/assetTypes';
+import { diskAssetKey } from './core/assetPath';
 import { snapshotFileStats } from './core/snapshot';
 
 type Theme = 'dark' | 'light';
@@ -43,7 +44,7 @@ export default function App() {
   // ── 派生数据（必须在 hooks 前，因 useSelection 依赖 filteredAssets） ──
   const filteredAssets = useMemo(() => assets.filter(a => {
     if (a.category !== activeCategory) return false;
-    const entry = analyses.get(`${a.category}/${a.stem.toLowerCase()}`);
+    const entry = analyses.get(diskAssetKey(a));
     if (!entry) return filterUsed === 'all';
     const onDisk = entry.onDisk;
     const inDb = entry.inDatabase;
@@ -328,7 +329,7 @@ export default function App() {
                   items={filteredAssets} scrollContainerRef={scrollContainerRef}
                   cardMinWidth={210} gap={10} cardHeight={90}
                   renderItem={(a) => {
-                    const k = `${a.category}/${a.stem.toLowerCase()}`;
+                    const k = diskAssetKey(a);
                     const entry = analyses.get(k);
                     const isSel = k === selectedAssetKey;
                     const isBatchSel = selectedKeys.has(k);

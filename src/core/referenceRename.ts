@@ -8,6 +8,7 @@ import type { AssetCategory, AssetFile, ProjectGameData } from '../types/index';
 import { createSnapshot } from './snapshot';
 import { prefetchedFileData } from '../scanner/assetScanner';
 import { makeTranscoder, writeFile } from './internal/lcfIo';
+import { dirRelOf, getDirHandleByRelPath } from './internal/fsPath';
 import { applyRenameToDatabase, applyRenameToMapInfo, applyRenameToMapUnit } from './renameEngine';
 
 export interface ReferenceRenameItem {
@@ -122,7 +123,7 @@ export async function applyReferenceRenames(
   // 找出游戏目录里需要随引用一起重命名的物理文件
   const stemToAsset = new Map<string, AssetFile>();
   for (const a of assets) {
-    if (a.handle !== undefined) stemToAsset.set(`${a.category}\u0000${a.stem.toLowerCase()}`, a);
+    if (a.handle !== undefined) stemToAsset.set(`${a.category}\u0000${(a.refName ?? a.stem).toLowerCase()}`, a);
   }
   const toRenameDisk = activeItems
     .map(item => ({ item, asset: stemToAsset.get(`${item.category}\u0000${item.oldName.toLowerCase()}`) }))
@@ -167,18 +168,18 @@ export async function applyReferenceRenames(
   // 磁盘文件改名（同名目标已存在且不是大小写差异时跳过，避免覆盖）
   const filesRenamed: string[] = [];
   const dirCache = new Map<string, FileSystemDirectoryHandle>();
-  const getDir = async (dirName: string) => {
-    let h = dirCache.get(dirName);
-    if (!h) { h = await root.getDirectoryHandle(dirName); dirCache.set(dirName, h); }
+  const getDir = async (dirRel: string) => {
+    let h = dirCache.get(dirRel);
+    if (!h) { h = await getDirHandleByRelPath(root, dirRel); dirCache.set(dirRel, h); }
     return h;
   };
 
   for (const { item, asset } of toRenameDisk) {
-    const dirName = asset.path.split('/')[0];
+    const dirDir = dirRelOf(asset.path);
     const newFileName = item.newName + asset.ext;
     const caseOnly = item.oldName.toLowerCase() === item.newName.toLowerCase();
     try {
-      const dirHandle = await getDir(dirName);
+      const dirHandle = await getDir(dirDir);
       if (!caseOnly) {
         const targetExists = await dirHandle.getFileHandle(newFileName).then(() => true).catch(() => false);
         if (targetExists) { skipped.push(`${asset.path} → ${newFileName}（目标已存在）`); continue; }

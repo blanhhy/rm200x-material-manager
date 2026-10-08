@@ -31,6 +31,11 @@ export interface AssetFile {
   height?: number;
   handle?: FileSystemFileHandle;
   prefetchedData?: ArrayBuffer;
+  /**
+   * 仅相对路径引用（如 `../m`）解析出的资产使用：指向本文件的引用名原文。
+   * 常规资产的引用名就等于 `stem`，无需该字段。
+   */
+  refName?: string;
 }
 
 export interface AssetReference {

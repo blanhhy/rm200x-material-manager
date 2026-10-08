@@ -7,6 +7,8 @@ import type { Database, MapUnit, TreeMap, MapInfo } from 'rpgrt';
 import type { AssetCategory, AssetFile, ProjectGameData } from '../types/index';
 import { createSnapshot } from './snapshot';
 import { makeTranscoder, writeFile } from './internal/lcfIo';
+import { dirRelOf, getDirHandleByRelPath } from './internal/fsPath';
+import { refDirOf } from './assetPath';
 import { traverseDatabase, traverseMapUnit, traverseMapInfo } from './internal/dbTraversal';
 import type { FieldChecker } from './internal/dbTraversal';
 
@@ -68,10 +70,17 @@ export function applyRenameToMapInfo(
   return renameCtx.changed;
 }
 
+/**
+ * 重命名单个素材：改写 DB/LMT/LMU 里的引用 + 重命名磁盘文件。
+ *
+ * `siblings` 为**指向同一个物理文件**的其它资产（同一张图被多个类别以相对路径引用时，
+ * 每个类目会各有一条资产记录）。它们必须一起改写：否则改完一类，另一类的引用就断了。
+ */
 export async function renameAsset(
   data: ProjectGameData,
   asset: AssetFile,
   newStem: string,
+  siblings: AssetFile[] = [],
 ): Promise<RenameResult> {
   const oldStem = asset.stem;
   const newStemClean = newStem.trim();
@@ -84,20 +93,30 @@ export async function renameAsset(
     return { success: false, message: '项目编码未知', filesWritten: [], filesRenamed: [] };
   }
   const transcoder = makeTranscoder(data.encoding);
-  console.log(`[RENAME] old="${oldStem}" new="${newStemClean}" cat=${asset.category} enc=${data.encoding}`);
+  // 相对路径引用（如 `../m`）的引用名不等于文件名，改写引用时要保留其相对目录部分
+  const targets = [asset, ...siblings].map(a => {
+    const oldRef = a.refName ?? a.stem;
+    const refDir = refDirOf(oldRef);
+    return { category: a.category, oldRef, newRef: refDir ? `${refDir}/${newStemClean}` : newStemClean };
+  });
+  console.log(`[RENAME] ${targets.map(t => `[${t.category}] "${t.oldRef}" → "${t.newRef}"`).join(' , ')} enc=${data.encoding}`);
 
   const dbClone: Database = JSON.parse(JSON.stringify(data.database));
-  const dbChanged = applyRenameToDatabase(dbClone, asset.category, oldStem, newStemClean, transcoder);
+  let dbChanged = false;
+  for (const t of targets) {
+    if (applyRenameToDatabase(dbClone, t.category, t.oldRef, t.newRef, transcoder)) dbChanged = true;
+  }
   console.log(`[RENAME] dbChanged=${dbChanged}`);
 
   const changedMapIds: number[] = [];
   const mapClones = new Map<number, MapUnit>();
   for (const [mapId, mu] of data.maps) {
     const muClone: MapUnit = JSON.parse(JSON.stringify(mu));
-    if (applyRenameToMapUnit(muClone, asset.category, oldStem, newStemClean, transcoder)) {
-      changedMapIds.push(mapId);
-      mapClones.set(mapId, muClone);
+    let changed = false;
+    for (const t of targets) {
+      if (applyRenameToMapUnit(muClone, t.category, t.oldRef, t.newRef, transcoder)) changed = true;
     }
+    if (changed) { changedMapIds.push(mapId); mapClones.set(mapId, muClone); }
   }
 
   const changedMapInfoIds: number[] = [];
@@ -105,8 +124,11 @@ export async function renameAsset(
   if (data.treeMap) {
     treeMapClone = JSON.parse(JSON.stringify(data.treeMap)) as TreeMap;
     for (const mi of treeMapClone.maps ?? []) {
-      if (applyRenameToMapInfo(mi, asset.category, oldStem, newStemClean)) {
-        changedMapInfoIds.push(mi.id);
+      for (const t of targets) {
+        if (applyRenameToMapInfo(mi, t.category, t.oldRef, t.newRef)) {
+          changedMapInfoIds.push(mi.id);
+          break;
+        }
       }
     }
   }
@@ -120,9 +142,9 @@ export async function renameAsset(
   }
   for (const mapId of changedMapIds) willWrite.push(`Map${String(mapId).padStart(4, '0')}.lmu`);
   const newFileName = newStemClean + asset.ext;
-  const dirName = asset.path.split('/')[0];
-  const oldRel = `${dirName}/${asset.name}`;
-  const newRel = `${dirName}/${newFileName}`;
+  const dirRel = dirRelOf(asset.path);
+  const oldRel = asset.path;
+  const newRel = dirRel ? `${dirRel}/${newFileName}` : newFileName;
 
   await createSnapshot(root, willWrite, {
     fromRel: oldRel,
@@ -154,7 +176,7 @@ export async function renameAsset(
   const filesRenamed: string[] = [];
   if (asset.handle !== undefined) {
     try {
-      const dirHandle = await root.getDirectoryHandle(dirName);
+      const dirHandle = await getDirHandleByRelPath(root, dirRel);
       const fileHandle = await dirHandle.getFileHandle(asset.name);
 
       try {

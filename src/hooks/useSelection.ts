@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { AssetFile } from '../types/index';
+import { diskAssetKey } from '../core/assetPath';
 
 export function useSelection(filteredAssets: AssetFile[]) {
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
@@ -13,11 +14,11 @@ export function useSelection(filteredAssets: AssetFile[]) {
   }
 
   function selectAllFiltered() {
-    setSelectedKeys(new Set(filteredAssets.map(a => `${a.category}/${a.stem.toLowerCase()}`)));
+    setSelectedKeys(new Set(filteredAssets.map(a => diskAssetKey(a))));
   }
 
   function invertSelection() {
-    const all = new Set(filteredAssets.map(a => `${a.category}/${a.stem.toLowerCase()}`));
+    const all = new Set(filteredAssets.map(a => diskAssetKey(a)));
     setSelectedKeys(prev => {
       const next = new Set<string>();
       for (const k of all) if (!prev.has(k)) next.add(k);

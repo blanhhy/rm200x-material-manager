@@ -1,21 +1,21 @@
-import type { AssetCategory, AssetFile, AssetReference, AssetAnalysis, EngineVersion } from '../types/index';
+import type { AssetFile, AssetReference, AssetAnalysis, EngineVersion } from '../types/index';
 import { isRTPAsset } from './rtpIndex';
+import { diskAssetKey, refAnalysisKey } from './assetPath';
 
 export function buildAnalyses(
   diskAssets: AssetFile[],
   refs: AssetReference[],
   engine?: EngineVersion,
 ): { allAssets: AssetFile[]; analyses: Map<string, AssetAnalysis> } {
-  const key = (cat: AssetCategory, stem: string) => `${cat}/${stem.toLowerCase()}`;
   const allAssets: AssetFile[] = [...diskAssets];
   const analyses = new Map<string, AssetAnalysis>();
 
   for (const a of diskAssets) {
-    analyses.set(key(a.category, a.stem), { asset: a, references: [], inDatabase: false, onDisk: true, inRtp: false });
+    analyses.set(diskAssetKey(a), { asset: a, references: [], inDatabase: false, onDisk: true, inRtp: false });
   }
 
   for (const ref of refs) {
-    const k = key(ref.category, ref.assetName);
+    const k = refAnalysisKey(ref.category, ref.assetName);
     let entry = analyses.get(k);
     if (!entry) {
       const vAsset: AssetFile = {

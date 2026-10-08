@@ -495,8 +495,9 @@ function traceMapInfo(mi: MapInfo, mapId: number, refs: AssetReference[]) {
     }
   }
   if (validName(mi.backgroundName)) {
-    // MapInfo.backgroundName → Picture（地图的背景图）
-    pushRef(refs, 'Picture', mi.backgroundName, { kind: 'MapInfo', mapId, field: 'backgroundName' });
+    // MapInfo.background_name 是地图的"战斗背景"指定（backgroundType=2 时生效），
+    // 与 Terrain.background_name 同一概念，都是 Backdrop/ 下的图，不是 Picture/
+    pushRef(refs, 'Backdrop', mi.backgroundName, { kind: 'MapInfo', mapId, field: 'backgroundName' });
   }
 }
 
