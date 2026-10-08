@@ -1,16 +1,15 @@
 import { useState } from 'react';
 import { useStore } from '../store/useStore';
 import { renameAsset } from '../core/renameEngine';
+import { scanProjectAssets } from '../scanner/assetScanner';
 import { useRebuildAnalyses } from './useRebuildAnalyses';
 import { diskAssetKey } from '../core/assetPath';
-import { dirRelOf, getDirHandleByRelPath } from '../core/internal/fsPath';
-import type { AssetAnalysis, AssetFile } from '../types/index';
+import type { AssetAnalysis } from '../types/index';
 
 export function useRenameAsset() {
   const [renaming, setRenaming] = useState(false);
   const gameData = useStore(s => s.gameData);
   const assets = useStore(s => s.assets);
-  const setAssets = useStore(s => s.setAssets);
   const setSelectedAssetKey = useStore(s => s.setSelectedAssetKey);
   const rebuild = useRebuildAnalyses();
 
@@ -27,38 +26,16 @@ export function useRenameAsset() {
         return;
       }
 
-      // 更新 assets 里对应的条目（需要拿到 move 后的新 FileHandle）
-      const newFileName = newStem + oldAsset.ext;
-      const newPath = oldAsset.path.replace(/[^/]+$/, newFileName);
-      let newHandle = oldAsset.handle;
-      try {
-        const dirHandle = await getDirHandleByRelPath(gameData.rootHandle!, dirRelOf(oldAsset.path));
-        newHandle = await dirHandle.getFileHandle(newFileName);
-      } catch (e) {
-        console.warn('重命名后无法重新打开文件句柄：', e);
-      }
-      let newAsset: AssetFile = oldAsset;
-      const newAssets = assets.map(a => {
-        if (a.name !== oldAsset.name || a.path !== oldAsset.path) return a;
-        const next: AssetFile = {
-          ...a,
-          name: newFileName,
-          stem: newStem,
-          path: newPath,
-          handle: newHandle,
-          refName: a.refName ? a.refName.replace(/[^/\\]+$/, newStem) : undefined,
-        };
-        if (a === oldAsset) newAsset = next;
-        return next;
-      });
-      setAssets(newAssets);
-
-      // 重跑引用分析
-      const diskOnly = newAssets.filter(a => a.handle !== undefined);
-      await rebuild(gameData, diskOnly);
+      // 磁盘文件名已变，重新扫描取新句柄后重建分析（与批量改名的 runRenamePlan 一致）
+      const found = await scanProjectAssets(gameData.rootHandle!);
+      await rebuild(gameData, found);
 
       // 选中新 key
-      setSelectedAssetKey(diskAssetKey(newAsset));
+      setSelectedAssetKey(diskAssetKey({
+        category: oldAsset.category,
+        path: oldAsset.path.replace(/[^/]+$/, newStem + oldAsset.ext),
+        ext: oldAsset.ext,
+      }));
     } catch (e) {
       alert('重命名出错：' + (e as Error).message);
     } finally {
