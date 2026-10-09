@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import type { AssetAnalysis, EngineVersion } from '../types/index';
 import { lookupRTPAlternative, lookupRTPDisplayName } from '../core/rtpIndex';
+import { buildTileLayout } from '../core/tileLayout';
+import { useStore } from '../store/useStore';
+import TileUsageModal from './TileUsageModal';
 
 const pad4 = (id: number) => String(id).padStart(4, '0');
 
@@ -83,10 +86,14 @@ export default function AssetDetail({
 }) {
   const [editing, setEditing] = useState(false);
   const [newName, setNewName] = useState('');
+  const [showTileUsage, setShowTileUsage] = useState(false);
+  const gameData = useStore(s => s.gameData);
 
   if (!analysis) return <div className="previewNoSelection">选中一个素材查看详情</div>;
 
   const asset = analysis.asset;
+  // 只有 ChipSet 有子图块单元划分，其余类别返回 null
+  const tileLayout = buildTileLayout(asset.category);
 
   function startRename() {
     setNewName(asset.stem);
@@ -180,9 +187,23 @@ export default function AssetDetail({
           <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{asset.path}</span>
         </div>
       )}
-      <h5 style={{ margin: '8px 0 4px', fontSize: 13 }}>
-        数据库引用 ({analysis.references.length})
-      </h5>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '8px 0 4px' }}>
+        <h5 style={{ margin: 0, fontSize: 13 }}>
+          数据库引用 ({analysis.references.length})
+        </h5>
+        {tileLayout && (
+          <button
+            onClick={() => setShowTileUsage(true)}
+            disabled={!gameData}
+            title={gameData ? '查看该 ChipSet 各子图块单元的引用详情' : '尚未加载游戏数据'}
+            style={{
+              marginLeft: 'auto', padding: '2px 8px', fontSize: 11, borderRadius: 4,
+              border: '1px solid var(--color-border)', background: 'var(--color-bg-elev)', color: 'var(--color-text)',
+              cursor: gameData ? 'pointer' : 'not-allowed',
+            }}
+          >查看图块引用详情</button>
+        )}
+      </div>
       {analysis.references.length === 0 ? (
         <p style={{ fontSize: 12, color: 'var(--color-text-dim)' }}>未在数据库中被引用</p>
       ) : (
@@ -195,6 +216,9 @@ export default function AssetDetail({
             </li>
           ))}
         </ul>
+      )}
+      {showTileUsage && (
+        <TileUsageModal analysis={analysis} onClose={() => setShowTileUsage(false)} />
       )}
     </div>
   );
