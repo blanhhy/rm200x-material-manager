@@ -33,6 +33,7 @@ export default function App() {
     analyses, setAnalyses,
     activeCategory, setActiveCategory,
     filterUsed, setFilterUsed,
+    searchQuery, setSearchQuery,
     selectedAssetKey, setSelectedAssetKey,
     loading, setLoading,
     setError,
@@ -42,8 +43,10 @@ export default function App() {
   } = useStore();
 
   // ── 派生数据（必须在 hooks 前，因 useSelection 依赖 filteredAssets） ──
+  const keyword = searchQuery.trim().toLowerCase();
   const filteredAssets = useMemo(() => assets.filter(a => {
     if (a.category !== activeCategory) return false;
+    if (keyword && !a.name.toLowerCase().includes(keyword)) return false;
     const entry = analyses.get(diskAssetKey(a));
     if (!entry) return filterUsed === 'all';
     const onDisk = entry.onDisk;
@@ -57,7 +60,7 @@ export default function App() {
       case 'missing': return !onDisk && inDb && !entry.inRtp;
       default:        return true;
     }
-  }), [assets, activeCategory, filterUsed, analyses]);
+  }), [assets, activeCategory, filterUsed, analyses, keyword]);
 
   // ── Hooks: 业务逻辑模块 ───────────────────────────────────────────
   const rebuild = useRebuildAnalyses();
@@ -70,7 +73,7 @@ export default function App() {
   // ── 项目加载 / 刷新 / 关闭 ────────────────────────────────────────
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => { scrollContainerRef.current?.scrollTo(0, 0); }, [activeCategory, filterUsed]);
+  useEffect(() => { scrollContainerRef.current?.scrollTo(0, 0); }, [activeCategory, filterUsed, keyword]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -295,6 +298,20 @@ export default function App() {
               <div className="filterBarRow">
                 <span className="filterLabel">筛选：</span>
                 <FilterDropdown value={filterUsed} onChange={(f) => { setFilterUsed(f); setSelectedKeys(new Set()); }} disabled={!gameData} />
+                <div className="searchBox">
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Escape') setSearchQuery(''); }}
+                    placeholder="搜索..."
+                    disabled={!gameData}
+                    aria-label="按素材名关键词筛选"
+                  />
+                  {searchQuery !== '' && (
+                    <button onClick={() => setSearchQuery('')} title="清空关键词" aria-label="清空关键词">×</button>
+                  )}
+                </div>
                 <span className="filterCount">{filteredAssets.length} 项</span>
                 {gameData && filteredAssets.length > 0 && selectedKeys.size === 0 && (
                   <button onClick={selectAllFiltered} className="btnSm" title="全选当前筛选结果">选择</button>
@@ -323,7 +340,9 @@ export default function App() {
               ) : !gameData ? (
                 <div className="pageEmpty"><p className="pageEmptyTitle">请先打开一个 RPG Maker 2000 / 2003 项目</p></div>
               ) : filteredAssets.length === 0 ? (
-                <div className="pageEmpty"><p className="pageEmptySub">该类别下没有素材</p></div>
+                <div className="pageEmpty">
+                  <p className="pageEmptySub">{keyword ? `没有匹配「${searchQuery.trim()}」的素材` : '该类别下没有素材'}</p>
+                </div>
               ) : (
                 <VirtualGrid
                   items={filteredAssets} scrollContainerRef={scrollContainerRef}

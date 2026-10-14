@@ -32,6 +32,10 @@ interface Store {
   filterUsed: 'all' | 'disk' | 'refs' | 'used' | 'unused' | 'rtp' | 'missing';
   setFilterUsed: (f: 'all' | 'disk' | 'refs' | 'used' | 'unused' | 'rtp' | 'missing') => void;
 
+  /** 素材名关键词（大小写不敏感，空串=不过滤） */
+  searchQuery: string;
+  setSearchQuery: (q: string) => void;
+
   // RTP source selection: null = none, "builtin" = built-in, arbitrary string = disk source label
   activeRtpSourceId: string | null;
   setActiveRtpSourceId: (id: string | null) => void;
@@ -71,6 +75,8 @@ export const useStore = create<Store>((set, get) => ({
   setSelectedAssetKey: (k) => set({ selectedAssetKey: k }),
   filterUsed: 'all',
   setFilterUsed: (f) => set({ filterUsed: f }),
+  searchQuery: '',
+  setSearchQuery: (q) => set({ searchQuery: q }),
   activeRtpSourceId: 'builtin',
   setActiveRtpSourceId: (id) => set({ activeRtpSourceId: id }),
   loading: false,

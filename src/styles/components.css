@@ -71,6 +71,26 @@
 .filterLabel { font-size: 12px; color: var(--color-text-muted); }
 .filterCount { margin-left: auto; font-size: 12px; color: var(--color-text-muted); }
 
+/* ── 关键词搜索框 ────────────────────────────────────── */
+.searchBox {
+  display: flex; align-items: center; gap: 2px;
+  padding: 4px 10px; border-radius: 5px;
+  border: 0px solid var(--color-border); background: var(--color-bg);
+}
+.searchBox:focus-within { border-color: var(--color-primary); }
+.searchBox input {
+  width: 130px; border: none; background: transparent; outline: none;
+  font-size: 12px; color: var(--color-text); font-family: inherit;
+}
+.searchBox input::placeholder { color: var(--color-text-dim); }
+.searchBox input:disabled { cursor: not-allowed; }
+.searchBox button {
+  display: flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; padding: 0; border: none; background: transparent;
+  cursor: pointer; font-size: 13px; line-height: 1; color: var(--color-text-muted);
+}
+.searchBox button:hover { color: var(--color-text); }
+
 /* ── 批量选择栏 ──────────────────────────────────────── */
 .batchBar { display: flex; gap: 6px; align-items: center; margin-top: 8px; }
 .batchBarLabel { font-size: 12px; color: var(--color-text-muted); margin-right: 4px; }
